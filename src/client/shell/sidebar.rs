@@ -226,8 +226,16 @@ pub(crate) fn render_sidebar(
             .add_modifier(Modifier::BOLD),
     );
 
-    let sidebar_rows =
-        space_groups::sidebar_rows(snapshot, worktree_entries(snapshot, state.collapsed_groups));
+    let preview = state
+        .selected_workspace_id
+        .filter(|target| &target.endpoint_id == state.active_endpoint_id)
+        .map(|target| target.workspace_id.as_str());
+    let sidebar_rows = space_groups::sidebar_rows(
+        snapshot,
+        worktree_entries(snapshot, state.collapsed_groups),
+        state.collapsed_groups,
+        preview,
+    );
     let body = Rect::new(
         workspace_area.x,
         workspace_area.y.saturating_add(WORKSPACE_HEADER_ROWS),
@@ -237,39 +245,13 @@ pub(crate) fn render_sidebar(
             .saturating_sub(WORKSPACE_HEADER_ROWS + 1),
     );
     hits.workspace_body = body;
-    let row_heights = sidebar_rows
-        .iter()
-        .map(|row| {
-            let SidebarRow::Space { entry, label, .. } = row else {
-                return 1;
-            };
-            snapshot
-                .workspaces
-                .get(entry.index)
-                .map(|workspace| {
-                    labeled_workspace_rows(
-                        workspace,
-                        *label,
-                        displayed_workspace_status(snapshot, workspace, state.collapsed_groups),
-                        entry.indented,
-                        &config.spaces,
-                    )
-                    .len()
-                    .max(1)
-                    .min(u16::MAX as usize) as u16
-                })
-                .unwrap_or(1)
-        })
-        .collect::<Vec<_>>();
-    let gaps = sidebar_rows
-        .iter()
-        .enumerate()
-        .map(|(index, _)| {
-            sidebar_rows.get(index + 1).map_or(0, |next| {
-                u16::from(next.starts_top_level()) * config.spaces.row_gap
-            })
-        })
-        .collect::<Vec<_>>();
+    let row_heights = space_groups::row_heights(
+        snapshot,
+        &sidebar_rows,
+        state.collapsed_groups,
+        &config.spaces,
+    );
+    let gaps = space_groups::row_gaps(&sidebar_rows, config.spaces.row_gap);
     let mut metrics = super::scroll::list_scroll_metrics(
         &row_heights,
         &gaps,
@@ -312,12 +294,13 @@ pub(crate) fn render_sidebar(
     {
         let gap = gaps.get(row_position).copied().unwrap_or(0);
         let (entry, label) = match row {
-            SidebarRow::Header(name) => {
+            SidebarRow::Header { name, folded } => {
                 if y >= body.bottom() {
                     break;
                 }
                 let rect = Rect::new(body.x, y, content_width, 1);
-                space_groups::render_header(buffer, rect, name, palette);
+                let hit = space_groups::render_header(buffer, rect, name, *folded, config);
+                hits.group_headers.push(hit);
                 y = y.saturating_add(1).saturating_add(gap);
                 continue;
             }
@@ -700,7 +683,7 @@ pub(in crate::client::shell) fn workspace_rows(
 }
 
 /// `workspace_rows` showing `label`, when given, as the space's name.
-fn labeled_workspace_rows(
+pub(in crate::client::shell) fn labeled_workspace_rows(
     workspace: &ClientShellWorkspace,
     label: Option<&str>,
     status: crate::api::schema::AgentStatus,

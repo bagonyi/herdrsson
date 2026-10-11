@@ -1217,6 +1217,9 @@ impl ClientShellState {
                 }
                 None => {}
             }
+            if self.drag_group_header(point) {
+                return;
+            }
             if let Some(press) = self.workspace_press.as_ref() {
                 let delta = mouse
                     .column
@@ -1367,6 +1370,9 @@ impl ClientShellState {
                     | ClientChromeDrag::ProductAnnouncementScrollbar { .. }
                     | ClientChromeDrag::ReleaseNotesScrollbar { .. } => {}
                 }
+                return;
+            }
+            if self.release_group_header(point, outcome) {
                 return;
             }
             if let Some(press) = self.workspace_press.take() {
@@ -1939,6 +1945,7 @@ impl ClientShellState {
                 let previous_pane_click = self.last_pane_click.take();
                 self.workspace_press = None;
                 self.tab_press = None;
+                self.group_header_press = None;
                 self.chrome_drag = None;
                 // The toggle is painted over the agent scrollbar's last cell.
                 if super::contains(self.hits.sidebar_toggle, point) {
@@ -2096,6 +2103,9 @@ impl ClientShellState {
                     self.toggle_collapsed_group(&endpoint_id, key);
                     outcome.repaint = true;
                     self.persist_chrome_preferences(outcome);
+                    return;
+                }
+                if self.press_group_header(point) {
                     return;
                 }
                 let workspace_press = self
