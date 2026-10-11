@@ -4,8 +4,11 @@ impl ClientContextMenuOverlay {
     pub(super) fn items(&self) -> Vec<ClientContextMenuItem> {
         use ClientContextMenuAction as Action;
 
-        let item = |label, action| ClientContextMenuItem { label, action };
-        match &self.target {
+        let item = |label: &'static str, action| ClientContextMenuItem {
+            label: label.into(),
+            action,
+        };
+        let items = match &self.target {
             ClientContextMenuTarget::Workspace { is_git: false, .. } => {
                 vec![item("Rename", Action::Rename), item("Close", Action::Close)]
             }
@@ -82,7 +85,11 @@ impl ClientContextMenuOverlay {
             ClientContextMenuTarget::SpaceGroup { collapsed, .. } => {
                 super::space_groups::header_menu_items(*collapsed)
             }
-        }
+            ClientContextMenuTarget::MoveToGroup {
+                groups, in_group, ..
+            } => super::space_groups::move_menu_items(groups, *in_group),
+        };
+        super::space_groups::with_move_to_group(&self.target, items)
     }
 }
 
@@ -119,6 +126,7 @@ impl ClientShellState {
                 has_worktree_children,
                 close_group,
                 collapsed,
+                move_to_group: super::space_groups::can_move_to_group(snapshot, workspace),
             },
             x,
             y,
@@ -195,6 +203,11 @@ impl ClientShellState {
             return;
         };
         match menu.target {
+            ClientContextMenuTarget::Workspace { workspace_id, .. }
+                if action == ClientContextMenuAction::MoveToGroup =>
+            {
+                self.open_move_to_group_menu(workspace_id, menu.x, menu.y)
+            }
             ClientContextMenuTarget::Workspace {
                 workspace_id,
                 close_group,
@@ -221,6 +234,11 @@ impl ClientShellState {
             ClientContextMenuTarget::SpaceGroup { name, .. } => {
                 self.activate_group_header_action(name, action, outcome)
             }
+            ClientContextMenuTarget::MoveToGroup {
+                workspace_id,
+                groups,
+                ..
+            } => self.activate_move_to_group_action(workspace_id, &groups, action, outcome),
         }
         outcome.repaint = true;
     }

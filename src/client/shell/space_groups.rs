@@ -1,11 +1,13 @@
 //! Space groups: a space the user named `Web/Miniteam` is drawn as `Miniteam` under a ` ▾ Web`
 //! header in the one-machine sidebar. Only the window knows about groups; the server keeps the
 //! full name and its own order. A click on a header folds the group (` ▸ ✓ Web`); a right-click
-//! opens its menu, which folds it too or renames the group (every member's name).
+//! opens its menu, which folds it too or renames the group (every member's name). A space's own
+//! menu moves it to a group by its name, and the window then moves it in the server's order too,
+//! so that order matches the drawing.
 
 use super::render::put_segment;
 use super::*;
-use crate::api::schema::AgentStatus;
+use crate::api::schema::{AgentStatus, Method, WorkspaceMoveBlockParams, WorkspaceRenameParams};
 
 /// Columns a group's member rows are indented by.
 const MEMBER_INDENT: u16 = 2;
@@ -68,7 +70,12 @@ pub(super) fn split_name(workspace: &ClientShellWorkspace) -> Option<(&str, &str
     if !workspace.custom_label {
         return None;
     }
-    let (group, name) = workspace.label.split_once('/')?;
+    split_label(&workspace.label)
+}
+
+/// The group and short name a user-set name `label` gives (see `split_name`).
+fn split_label(label: &str) -> Option<(&str, &str)> {
+    let (group, name) = label.split_once('/')?;
     let (group, name) = (group.trim(), name.trim());
     (!group.is_empty() && !name.is_empty()).then_some((group, name))
 }
@@ -373,13 +380,32 @@ fn grouped<'a>(
     ordered
 }
 
-/// The named group of each entry's block. A block is what upstream emits together for one
-/// worktree group (its parent rows, then its linked children) and goes with its first parent's
-/// name; any other space is a block of its own.
+/// The named group of each entry's block: its head's (see `block_heads`).
 fn block_groups<'a>(
     snapshot: &'a ClientShellSnapshot,
     entries: &[WorkspaceEntry],
 ) -> Vec<Option<&'a str>> {
+    let mut group = None;
+    entries
+        .iter()
+        .zip(block_heads(snapshot, entries))
+        .map(|(entry, head)| {
+            if head {
+                group = snapshot
+                    .workspaces
+                    .get(entry.index)
+                    .and_then(split_name)
+                    .map(|(group, _)| group);
+            }
+            group
+        })
+        .collect()
+}
+
+/// Whether each entry heads a block. A block is what upstream emits together for one worktree
+/// group (its parent rows, then its linked children) and goes with its first parent's name; any
+/// other space is a block of its own.
+fn block_heads(snapshot: &ClientShellSnapshot, entries: &[WorkspaceEntry]) -> Vec<bool> {
     let linked_keys = snapshot
         .workspaces
         .iter()
@@ -401,23 +427,16 @@ fn block_groups<'a>(
             })
             .map(|worktree| worktree.key.as_str())
     };
-    let mut groups = Vec::with_capacity(entries.len());
-    let mut group = None;
     let mut previous_parent = None;
-    for entry in entries {
-        let parent = parent_key(entry);
-        let continues_block = entry.indented || (parent.is_some() && parent == previous_parent);
-        if !continues_block {
-            group = snapshot
-                .workspaces
-                .get(entry.index)
-                .and_then(split_name)
-                .map(|(group, _)| group);
-        }
-        previous_parent = parent;
-        groups.push(group);
-    }
-    groups
+    entries
+        .iter()
+        .map(|entry| {
+            let parent = parent_key(entry);
+            let continues_block = entry.indented || (parent.is_some() && parent == previous_parent);
+            previous_parent = parent;
+            !continues_block
+        })
+        .collect()
 }
 
 /// The part of a space row drawn with its content: indented when the row is in a group.
@@ -486,7 +505,10 @@ pub(super) fn render_header(
 pub(super) fn header_menu_items(collapsed: bool) -> Vec<ClientContextMenuItem> {
     use ClientContextMenuAction as Action;
 
-    let item = |label, action| ClientContextMenuItem { label, action };
+    let item = |label: &'static str, action| ClientContextMenuItem {
+        label: label.into(),
+        action,
+    };
     vec![
         item(
             if collapsed { "Expand" } else { "Collapse" },
@@ -526,6 +548,267 @@ pub(super) fn move_fold(collapsed_groups: &mut HashSet<String>, old: &str, new: 
     }
     collapsed_groups.insert(fold_key(new));
     true
+}
+
+/// A space menu's items with "Move to group" after "Rename" when its target offers it.
+pub(super) fn with_move_to_group(
+    target: &ClientContextMenuTarget,
+    mut items: Vec<ClientContextMenuItem>,
+) -> Vec<ClientContextMenuItem> {
+    if matches!(
+        target,
+        ClientContextMenuTarget::Workspace {
+            move_to_group: true,
+            ..
+        }
+    ) {
+        let after_rename = items
+            .iter()
+            .position(|item| item.action == ClientContextMenuAction::Rename)
+            .map_or(0, |rename| rename + 1);
+        items.insert(
+            after_rename,
+            ClientContextMenuItem {
+                label: "Move to group".into(),
+                action: ClientContextMenuAction::MoveToGroup,
+            },
+        );
+    }
+    items
+}
+
+/// Whether a space's menu offers "Move to group": every space but the rest of a worktree block
+/// (linked children under their parent, second parent checkouts), which its head places.
+pub(super) fn can_move_to_group(
+    snapshot: &ClientShellSnapshot,
+    workspace: &ClientShellWorkspace,
+) -> bool {
+    let entries = super::render::workspace_entries(snapshot, &HashSet::new());
+    moving_block(snapshot, &entries, &workspace.workspace_id).is_some()
+}
+
+/// The items of "Move to group"'s menu: the other groups, "New group..." and, for a space named
+/// into a group, "No group".
+pub(super) fn move_menu_items(groups: &[String], in_group: bool) -> Vec<ClientContextMenuItem> {
+    use ClientContextMenuAction as Action;
+
+    let mut items = groups
+        .iter()
+        .enumerate()
+        .map(|(index, group)| ClientContextMenuItem {
+            label: group.clone().into(),
+            action: Action::JoinGroup(index),
+        })
+        .collect::<Vec<_>>();
+    items.push(ClientContextMenuItem {
+        label: "New group...".into(),
+        action: Action::NewGroup,
+    });
+    if in_group {
+        items.push(ClientContextMenuItem {
+            label: "No group".into(),
+            action: Action::LeaveGroup,
+        });
+    }
+    items
+}
+
+/// The groups "Move to group" offers `workspace_id`: every group with a header, in drawn order,
+/// except the one the space is drawn in.
+fn other_groups(snapshot: &ClientShellSnapshot, workspace_id: &str) -> Vec<String> {
+    let entries = super::render::workspace_entries(snapshot, &HashSet::new());
+    let groups = block_groups(snapshot, &entries);
+    let own = drawn_group(snapshot, &entries, &groups, workspace_id);
+    let mut seen = HashSet::new();
+    groups
+        .into_iter()
+        .flatten()
+        .filter(|group| Some(*group) != own && seen.insert(*group))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The name a space shows inside a group: its short name when it is named into one, otherwise its
+/// whole name (user-set or automatic).
+fn short_name(workspace: &ClientShellWorkspace) -> &str {
+    split_name(workspace).map_or_else(|| workspace.label.trim(), |(_, short)| short)
+}
+
+/// What choosing group `group` in `workspace_id`'s "Move to group" menu sends: the rename to
+/// `<group>/<short name>`, then the move that puts the space after the group's last space.
+pub(super) fn join_group_methods(
+    snapshot: &ClientShellSnapshot,
+    workspace_id: &str,
+    group: &str,
+) -> Vec<Method> {
+    let Some(workspace) = snapshot
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.workspace_id == workspace_id)
+    else {
+        return Vec::new();
+    };
+    let mut methods = vec![Method::WorkspaceRename(WorkspaceRenameParams {
+        workspace_id: workspace_id.to_owned(),
+        label: format!("{group}/{}", short_name(workspace)),
+    })];
+    methods.extend(join_group_move(snapshot, workspace_id, group));
+    methods
+}
+
+/// What the rename box "New group..." opened sends for its trimmed text `label`: the space's
+/// rename, but nothing while the group side is still empty (`/<short>` as prefilled, or `/`).
+pub(super) fn new_group_rename(workspace_id: String, label: &str) -> Option<Method> {
+    (!label.is_empty() && !label.starts_with('/')).then(|| {
+        Method::WorkspaceRename(WorkspaceRenameParams {
+            workspace_id,
+            label: label.to_owned(),
+        })
+    })
+}
+
+/// The move that goes with the rename box naming `workspace_id` `label` (trimmed): into another
+/// group that already has spaces, it moves after that group's last space as "Move to group" does.
+/// A new group, leaving a group or staying in one keeps the server position.
+pub(super) fn rename_move(
+    snapshot: &ClientShellSnapshot,
+    workspace_id: &str,
+    label: &str,
+) -> Option<Method> {
+    let (group, _) = split_label(label)?;
+    let entries = super::render::workspace_entries(snapshot, &HashSet::new());
+    let groups = block_groups(snapshot, &entries);
+    if drawn_group(snapshot, &entries, &groups, workspace_id) == Some(group) {
+        return None;
+    }
+    join_group_move(snapshot, workspace_id, group)
+}
+
+/// The move that puts `workspace_id`, with its block, right after the last space drawn in `group`
+/// (its members and their worktree blocks) in server order, so the server order matches the
+/// drawing. None when nothing else is drawn in the group, when the space moves only with its
+/// block's head, and when its block is there already.
+fn join_group_move(
+    snapshot: &ClientShellSnapshot,
+    workspace_id: &str,
+    group: &str,
+) -> Option<Method> {
+    let entries = super::render::workspace_entries(snapshot, &HashSet::new());
+    let block = moving_block(snapshot, &entries, workspace_id)?;
+    let server_order = || {
+        snapshot
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.workspace_id.as_str())
+    };
+    let last = entries
+        .iter()
+        .zip(block_groups(snapshot, &entries))
+        .filter(|(_, drawn_in)| *drawn_in == Some(group))
+        .filter(|(entry, _)| {
+            snapshot
+                .workspaces
+                .get(entry.index)
+                .is_some_and(|workspace| !block.contains(&workspace.workspace_id.as_str()))
+        })
+        .map(|(entry, _)| entry.index)
+        .max()?;
+    let before = server_order()
+        .skip(last + 1)
+        .find(|workspace_id| !block.contains(workspace_id));
+    // The order the server makes of the move; nothing to send when it is the current one.
+    let mut moved = server_order()
+        .filter(|workspace_id| !block.contains(workspace_id))
+        .collect::<Vec<_>>();
+    let at = before
+        .and_then(|before| {
+            moved
+                .iter()
+                .position(|workspace_id| *workspace_id == before)
+        })
+        .unwrap_or(moved.len());
+    moved.splice(at..at, block.iter().copied());
+    if moved.into_iter().eq(server_order()) {
+        return None;
+    }
+    Some(Method::WorkspaceMoveBlock(WorkspaceMoveBlockParams {
+        workspace_ids: block.into_iter().map(str::to_owned).collect(),
+        before_workspace_id: before.map(str::to_owned),
+    }))
+}
+
+/// The spaces that move with `workspace_id` when it changes group, the space first: a worktree
+/// block's head brings every other space of its repository (its block), as upstream's drag moves
+/// it; any other space moves alone. None for the rest of a block (a linked child under its parent,
+/// a second parent checkout), which its head places, and for a space that is gone. `entries` is
+/// the full list (no folds).
+fn moving_block<'a>(
+    snapshot: &'a ClientShellSnapshot,
+    entries: &[WorkspaceEntry],
+    workspace_id: &str,
+) -> Option<Vec<&'a str>> {
+    let (index, workspace) = snapshot
+        .workspaces
+        .iter()
+        .enumerate()
+        .find(|(_, workspace)| workspace.workspace_id == workspace_id)?;
+    let heads_block = entries
+        .iter()
+        .zip(block_heads(snapshot, entries))
+        .any(|(entry, head)| entry.index == index && head);
+    if !heads_block {
+        return None;
+    }
+    let parent_key = workspace
+        .worktree
+        .as_ref()
+        .filter(|worktree| !worktree.is_linked_worktree)
+        .map(|worktree| worktree.key.as_str())
+        .filter(|key| {
+            snapshot.workspaces.iter().any(|other| {
+                other
+                    .worktree
+                    .as_ref()
+                    .is_some_and(|worktree| worktree.is_linked_worktree && worktree.key == *key)
+            })
+        });
+    let mut block = vec![workspace.workspace_id.as_str()];
+    if let Some(key) = parent_key {
+        block.extend(
+            snapshot
+                .workspaces
+                .iter()
+                .filter(|other| {
+                    other.workspace_id != workspace_id
+                        && other
+                            .worktree
+                            .as_ref()
+                            .is_some_and(|worktree| worktree.key == key)
+                })
+                .map(|other| other.workspace_id.as_str()),
+        );
+    }
+    Some(block)
+}
+
+/// The named group `workspace_id` is drawn in: its block's. `groups` is `block_groups` of
+/// `entries`.
+fn drawn_group<'a>(
+    snapshot: &ClientShellSnapshot,
+    entries: &[WorkspaceEntry],
+    groups: &[Option<&'a str>],
+    workspace_id: &str,
+) -> Option<&'a str> {
+    entries
+        .iter()
+        .zip(groups)
+        .find(|(entry, _)| {
+            snapshot
+                .workspaces
+                .get(entry.index)
+                .is_some_and(|workspace| workspace.workspace_id == workspace_id)
+        })
+        .and_then(|(_, group)| *group)
 }
 
 impl ClientShellState {
@@ -697,8 +980,6 @@ impl ClientShellState {
         new: &str,
         outcome: &mut ClientShellInput,
     ) {
-        use crate::api::schema::{Method, WorkspaceRenameParams};
-
         let renames = self
             .snapshot
             .as_deref()
@@ -721,6 +1002,139 @@ impl ClientShellState {
         }
         if queued && move_fold(&mut self.collapsed_groups, old, new) {
             self.persist_chrome_preferences(outcome);
+        }
+    }
+
+    /// Replaces a space's menu with its "Move to group" menu, at the same place.
+    pub(super) fn open_move_to_group_menu(&mut self, workspace_id: String, x: u16, y: u16) {
+        let Some(snapshot) = self.snapshot.as_deref() else {
+            return;
+        };
+        let Some(workspace) = snapshot
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.workspace_id == workspace_id)
+            .filter(|workspace| can_move_to_group(snapshot, workspace))
+        else {
+            return;
+        };
+        let in_group = split_name(workspace).is_some();
+        let groups = other_groups(snapshot, &workspace_id);
+        self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
+            target: ClientContextMenuTarget::MoveToGroup {
+                workspace_id,
+                groups,
+                in_group,
+            },
+            x,
+            y,
+            highlighted: 0,
+        }));
+    }
+
+    /// Runs an item of a space's "Move to group" menu.
+    pub(super) fn activate_move_to_group_action(
+        &mut self,
+        workspace_id: String,
+        groups: &[String],
+        action: ClientContextMenuAction,
+        outcome: &mut ClientShellInput,
+    ) {
+        let Some(workspace) = self.snapshot.as_deref().and_then(|snapshot| {
+            snapshot
+                .workspaces
+                .iter()
+                .find(|workspace| workspace.workspace_id == workspace_id)
+        }) else {
+            return;
+        };
+        match action {
+            ClientContextMenuAction::JoinGroup(index) => {
+                let Some(group) = groups.get(index) else {
+                    return;
+                };
+                let methods = self
+                    .snapshot
+                    .as_deref()
+                    .map(|snapshot| join_group_methods(snapshot, &workspace_id, group))
+                    .unwrap_or_default();
+                for method in methods {
+                    // The move goes only after its rename, which a refusal would refuse too.
+                    if !self.push_endpoint_method_with_kind(
+                        method,
+                        PendingEndpointKind::Generic,
+                        outcome,
+                    ) {
+                        break;
+                    }
+                }
+            }
+            ClientContextMenuAction::LeaveGroup => {
+                let Some((_, short)) = split_name(workspace) else {
+                    return;
+                };
+                // `app/x` would land in group `app`: the user picks the name instead.
+                if short.contains('/') {
+                    let input = TextEditor::new(short, false);
+                    self.overlay = Some(ClientShellOverlay::Rename(ClientRenameOverlay {
+                        title: "rename workspace",
+                        input,
+                        target: ClientRenameTarget::Workspace { workspace_id },
+                    }));
+                    return;
+                }
+                let label = short.to_owned();
+                self.push_endpoint_method(
+                    Method::WorkspaceRename(WorkspaceRenameParams {
+                        workspace_id,
+                        label,
+                    }),
+                    outcome,
+                );
+            }
+            ClientContextMenuAction::NewGroup => {
+                // The group name goes before the slash: the cursor starts there.
+                let mut input = TextEditor::new(&format!("/{}", short_name(workspace)), false);
+                input.handle_key(&crate::input::TerminalKey::new(
+                    KeyCode::Home,
+                    crossterm::event::KeyModifiers::NONE,
+                ));
+                self.overlay = Some(ClientShellOverlay::Rename(ClientRenameOverlay {
+                    title: "rename workspace",
+                    input,
+                    target: ClientRenameTarget::SpaceNewGroup { workspace_id },
+                }));
+            }
+            _ => {}
+        }
+    }
+
+    /// The move that goes with saving the rename box of a space (`rename_move`).
+    pub(super) fn rename_group_move(
+        &self,
+        target: &ClientRenameTarget,
+        label: &str,
+    ) -> Option<Method> {
+        let (ClientRenameTarget::Workspace { workspace_id }
+        | ClientRenameTarget::SpaceNewGroup { workspace_id }) = target
+        else {
+            return None;
+        };
+        rename_move(self.snapshot.as_deref()?, workspace_id, label)
+    }
+
+    /// Sends what a rename box saves, then its group move (`rename_group_move`) if that was
+    /// queued: a refused rename moves nothing.
+    pub(super) fn push_rename(
+        &mut self,
+        method: Method,
+        group_move: Option<Method>,
+        outcome: &mut ClientShellInput,
+    ) {
+        let queued =
+            self.push_endpoint_method_with_kind(method, PendingEndpointKind::Generic, outcome);
+        if let Some(group_move) = group_move.filter(|_| queued) {
+            self.push_endpoint_method(group_move, outcome);
         }
     }
 
