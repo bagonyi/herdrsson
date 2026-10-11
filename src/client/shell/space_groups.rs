@@ -1,6 +1,7 @@
 //! Space groups: a space the user named `Web/Miniteam` is drawn as `Miniteam` under a ` ▾ Web`
 //! header in the one-machine sidebar. Only the window knows about groups; the server keeps the
-//! full name and its own order. A click on a header folds the group (` ▸ ✓ Web`).
+//! full name and its own order. A click on a header folds the group (` ▸ ✓ Web`); a right-click
+//! opens its menu, which folds it too or renames the group (every member's name).
 
 use super::render::put_segment;
 use super::*;
@@ -481,6 +482,52 @@ pub(super) fn render_header(
     }
 }
 
+/// The items of a group header's right-click menu.
+pub(super) fn header_menu_items(collapsed: bool) -> Vec<ClientContextMenuItem> {
+    use ClientContextMenuAction as Action;
+
+    let item = |label, action| ClientContextMenuItem { label, action };
+    vec![
+        item(
+            if collapsed { "Expand" } else { "Collapse" },
+            Action::ToggleGroup,
+        ),
+        item("Rename group...", Action::Rename),
+    ]
+}
+
+/// The renames that rename group `old` to `new` (trimmed): `(workspace id, "<new>/<short name>")`
+/// for every space whose own name is in `old`. A linked worktree child drawn in the group under
+/// its block's head, but named otherwise, keeps its name. None when `new` is empty, contains `/`
+/// or is `old`.
+pub(super) fn group_renames(
+    snapshot: &ClientShellSnapshot,
+    old: &str,
+    new: &str,
+) -> Vec<(String, String)> {
+    if new.is_empty() || new.contains('/') || new == old {
+        return Vec::new();
+    }
+    snapshot
+        .workspaces
+        .iter()
+        .filter_map(|workspace| {
+            let (group, short) = split_name(workspace)?;
+            (group == old).then(|| (workspace.workspace_id.clone(), format!("{new}/{short}")))
+        })
+        .collect()
+}
+
+/// Moves a folded group's fold to its new name; false when `old` was not folded. Renamed onto a
+/// group that is folded already, the merged group stays folded.
+pub(super) fn move_fold(collapsed_groups: &mut HashSet<String>, old: &str, new: &str) -> bool {
+    if !collapsed_groups.remove(&fold_key(old)) {
+        return false;
+    }
+    collapsed_groups.insert(fold_key(new));
+    true
+}
+
 impl ClientShellState {
     /// Folds or unfolds a named group of the one-machine sidebar and saves the fold state.
     pub(super) fn toggle_group_fold(&mut self, group: &str, outcome: &mut ClientShellInput) {
@@ -586,5 +633,102 @@ impl ClientShellState {
             self.toggle_group_fold(&press.group, outcome);
         }
         true
+    }
+
+    /// Opens the right-click menu of the group header under `point`, if there is one.
+    pub(super) fn open_group_header_menu(
+        &mut self,
+        point: (u16, u16),
+        outcome: &mut ClientShellInput,
+    ) -> bool {
+        if self.sidebar_collapsed {
+            return false;
+        }
+        let Some(name) = self
+            .hits
+            .group_headers
+            .iter()
+            .find(|hit| super::contains(hit.rect, point))
+            .map(|hit| hit.group.clone())
+        else {
+            return false;
+        };
+        // A left press held on a header must not fold it under the menu when released.
+        self.group_header_press = None;
+        let collapsed = self.collapsed_groups.contains(&fold_key(&name));
+        self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
+            target: ClientContextMenuTarget::SpaceGroup { name, collapsed },
+            x: point.0,
+            y: point.1,
+            highlighted: 0,
+        }));
+        outcome.repaint = true;
+        true
+    }
+
+    /// Runs an item of a group header's menu.
+    pub(super) fn activate_group_header_action(
+        &mut self,
+        name: String,
+        action: ClientContextMenuAction,
+        outcome: &mut ClientShellInput,
+    ) {
+        match action {
+            // The group may have gone while its menu was open; a fold key for it would be stale.
+            ClientContextMenuAction::ToggleGroup if self.group_is_drawn(&name) => {
+                self.toggle_group_fold(&name, outcome)
+            }
+            ClientContextMenuAction::Rename => {
+                self.overlay = Some(ClientShellOverlay::Rename(ClientRenameOverlay {
+                    title: "rename group",
+                    input: TextEditor::new(&name, false),
+                    target: ClientRenameTarget::SpaceGroup { name },
+                }));
+            }
+            _ => {}
+        }
+    }
+
+    /// Saves the rename box of group `old` with its trimmed text `new`: renames every member and
+    /// moves the fold with the group.
+    pub(super) fn rename_space_group(
+        &mut self,
+        old: &str,
+        new: &str,
+        outcome: &mut ClientShellInput,
+    ) {
+        use crate::api::schema::{Method, WorkspaceRenameParams};
+
+        let renames = self
+            .snapshot
+            .as_deref()
+            .map(|snapshot| group_renames(snapshot, old, new))
+            .unwrap_or_default();
+        let mut queued = false;
+        for (workspace_id, label) in renames {
+            // A refusal (machine not ready, method unsupported) would refuse the rest too.
+            if !self.push_endpoint_method_with_kind(
+                Method::WorkspaceRename(WorkspaceRenameParams {
+                    workspace_id,
+                    label,
+                }),
+                PendingEndpointKind::Generic,
+                outcome,
+            ) {
+                break;
+            }
+            queued = true;
+        }
+        if queued && move_fold(&mut self.collapsed_groups, old, new) {
+            self.persist_chrome_preferences(outcome);
+        }
+    }
+
+    /// Whether the one-machine sidebar draws a header for `group`.
+    fn group_is_drawn(&self, group: &str) -> bool {
+        self.snapshot.as_deref().is_some_and(|snapshot| {
+            let entries = self.navigation_workspace_entries(snapshot);
+            block_groups(snapshot, &entries).contains(&Some(group))
+        })
     }
 }

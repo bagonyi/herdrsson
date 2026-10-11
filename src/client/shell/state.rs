@@ -316,6 +316,10 @@ pub(super) enum ClientRenameTarget {
     Pane {
         pane_id: String,
     },
+    /// A sidebar space group: renames each member (`space_groups`).
+    SpaceGroup {
+        name: String,
+    },
 }
 
 #[derive(Debug)]
@@ -549,6 +553,8 @@ pub(super) enum ClientContextMenuTarget {
         has_manual_label: bool,
         right_click_passthrough: bool,
     },
+    /// A sidebar space group's header (`space_groups`).
+    SpaceGroup { name: String, collapsed: bool },
 }
 
 #[derive(Debug)]

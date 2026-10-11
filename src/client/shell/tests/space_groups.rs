@@ -827,11 +827,6 @@ fn clicking_a_group_header_folds_and_unfolds_it() {
             format!(" {icon} plain"),
         ]
     );
-
-    // Right-click on a header does nothing yet.
-    let header = header_point(&state, "A");
-    let right = mouse(&mut state, MouseEventKind::Down(MouseButton::Right), header);
-    assert!(right.actions.is_empty() && state.overlay.is_none());
 }
 
 #[test]
@@ -1237,10 +1232,17 @@ fn group_headers_get_no_hits_without_mouse_capture() {
     click(&mut state, (body.x + 4, body.y));
     assert!(state.collapsed_groups.is_empty());
     assert_eq!(body_lines(&mut state, 1), [" ▾ A"]);
+    let right = mouse(
+        &mut state,
+        MouseEventKind::Down(MouseButton::Right),
+        (body.x + 4, body.y),
+    );
+    assert!(right.actions.is_empty());
+    assert!(state.overlay.is_none(), "no header menu");
 }
 
-#[test]
-fn group_folds_are_saved_with_the_window_preferences() {
+/// A new window preferences file holding `contents`.
+fn preferences_file(contents: &str) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!(
         "herdr-space-group-folds-{}-{}.json",
         std::process::id(),
@@ -1249,18 +1251,25 @@ fn group_folds_are_saved_with_the_window_preferences() {
             .expect("clock after epoch")
             .as_nanos()
     ));
-    std::fs::write(&path, r#"{"collapsed_groups":["/repo","group:A"]}"#)
-        .expect("write preferences");
+    std::fs::write(&path, contents).expect("write preferences");
+    path
+}
+
+/// A window that loads and saves its preferences at `path`.
+fn with_preferences(path: &std::path::Path, projected: ClientShellSnapshot) -> ClientShellState {
+    let config =
+        ClientShellConfig::from_config(&Config::default()).with_preferences_path(path.into());
+    let mut state = ClientShellState::new(config);
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+    state
+}
+
+#[test]
+fn group_folds_are_saved_with_the_window_preferences() {
+    let path = preferences_file(r#"{"collapsed_groups":["/repo","group:A"]}"#);
     let open = |path: &std::path::Path| {
-        let config =
-            ClientShellConfig::from_config(&Config::default()).with_preferences_path(path.into());
-        let mut state = ClientShellState::new(config);
-        state.set_snapshot(Box::new(focused_on(
-            named_spaces(&["A/one", "plain"]),
-            "ws_2",
-        )));
-        state.set_pane_surface(surface());
-        state
+        with_preferences(path, focused_on(named_spaces(&["A/one", "plain"]), "ws_2"))
     };
 
     let mut state = open(&path);
@@ -1341,4 +1350,665 @@ fn worktree_folds_inside_a_group_stay_independent_of_the_group_fold() {
             format!(" {icon} plain"),
         ]
     );
+}
+
+fn right_click(state: &mut ClientShellState, point: (u16, u16)) -> ClientShellInput {
+    mouse(state, MouseEventKind::Down(MouseButton::Right), point)
+}
+
+fn key(state: &mut ClientShellState, code: KeyCode) -> ClientShellInput {
+    state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+        code,
+        KeyModifiers::NONE,
+    ))])
+}
+
+/// Right-clicks `group`'s header in a new frame.
+fn open_header_menu(state: &mut ClientShellState, group: &str) {
+    state.compose(106, 30).expect("composed frame");
+    let point = header_point(state, group);
+    let outcome = right_click(state, point);
+    assert!(outcome.actions.is_empty() && outcome.repaint);
+}
+
+/// The open context menu's target and item labels.
+fn open_menu(state: &ClientShellState) -> (&ClientContextMenuTarget, Vec<&'static str>) {
+    let Some(ClientShellOverlay::ContextMenu(menu)) = state.overlay.as_ref() else {
+        panic!("a context menu is open");
+    };
+    let labels = menu.items().iter().map(|item| item.label).collect();
+    (&menu.target, labels)
+}
+
+/// Clicks the open menu's item `label` where a new frame draws it.
+fn choose(state: &mut ClientShellState, label: &str) -> ClientShellInput {
+    state.compose(106, 30).expect("menu frame");
+    let index = open_menu(state)
+        .1
+        .iter()
+        .position(|item| *item == label)
+        .expect("menu item");
+    let (row, _) = state
+        .hits
+        .context_menu_rows
+        .iter()
+        .find(|(_, row)| *row == index)
+        .copied()
+        .expect("menu row hit");
+    mouse(
+        state,
+        MouseEventKind::Down(MouseButton::Left),
+        (row.x + 1, row.y),
+    )
+}
+
+/// Opens the rename box of `group` from its header menu.
+fn open_group_rename(state: &mut ClientShellState, group: &str) {
+    open_header_menu(state, group);
+    assert!(choose(state, "Rename group...").actions.is_empty());
+}
+
+/// Replaces the rename box's text with `text` and presses Enter; the renames sent, as
+/// `(workspace id, new name)`.
+fn submit_rename(state: &mut ClientShellState, text: &str) -> Vec<(String, String)> {
+    state.handle_input_bytes(&[0x15]);
+    if !text.is_empty() {
+        state.handle_input_bytes(text.as_bytes());
+    }
+    let save = state.handle_input_bytes(b"\r");
+    assert!(state.overlay.is_none(), "Enter closes the rename box");
+    save.actions
+        .iter()
+        .map(|action| {
+            let ClientShellAction::Endpoint { request, .. } = action else {
+                panic!("not an endpoint request: {action:?}");
+            };
+            let crate::api::schema::Method::WorkspaceRename(params) = &request.method else {
+                panic!("not a space rename: {:?}", request.method);
+            };
+            (params.workspace_id.clone(), params.label.clone())
+        })
+        .collect()
+}
+
+fn renamed(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs
+        .iter()
+        .map(|(workspace_id, label)| ((*workspace_id).to_owned(), (*label).to_owned()))
+        .collect()
+}
+
+/// The server's answer to `renames`: the next snapshot, with the new names.
+fn apply_renames(state: &mut ClientShellState, renames: &[(String, String)]) {
+    let mut projected = (**state.snapshot.as_ref().expect("snapshot")).clone();
+    projected.revision += 1;
+    for (workspace_id, label) in renames {
+        let workspace = projected
+            .workspaces
+            .iter_mut()
+            .find(|workspace| &workspace.workspace_id == workspace_id)
+            .expect("renamed space");
+        workspace.label = label.clone();
+    }
+    let mut projected_surface = surface();
+    projected_surface.projection_revision = projected.revision;
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(projected_surface);
+}
+
+#[test]
+fn right_clicking_a_group_header_opens_its_menu() {
+    let mut state = grouped_state(focused_on(
+        named_spaces(&["A/one", "A/two", "plain"]),
+        "ws_3",
+    ));
+    let icon = icon(&state);
+    open_header_menu(&mut state, "A");
+    let (target, labels) = open_menu(&state);
+    assert!(matches!(
+        target,
+        ClientContextMenuTarget::SpaceGroup { name, collapsed: false } if name == "A"
+    ));
+    assert_eq!(labels, ["Collapse", "Rename group..."]);
+
+    // Drawn at the pointer, like the space menu.
+    let pointer = header_point(&state, "A");
+    let frame = state.compose(106, 30).expect("menu frame");
+    let rows = state.hits.context_menu_rows.clone();
+    assert_eq!(rows.len(), 2);
+    assert_eq!((rows[0].0.x, rows[0].0.y), (pointer.0 + 1, pointer.1 + 1));
+    let lines = frame_rows(&frame);
+    for ((row, _), label) in rows.iter().zip(["Collapse", "Rename group..."]) {
+        let line = lines[usize::from(row.y)]
+            .chars()
+            .skip(usize::from(row.x))
+            .take(usize::from(row.width))
+            .collect::<String>();
+        assert_eq!(line.trim_end(), label);
+    }
+
+    // Highlighted and chosen with the keys like any context menu.
+    key(&mut state, KeyCode::Down);
+    let Some(ClientShellOverlay::ContextMenu(menu)) = state.overlay.as_ref() else {
+        panic!("menu still open");
+    };
+    assert_eq!(menu.highlighted, 1);
+    key(&mut state, KeyCode::Up);
+    let collapse = key(&mut state, KeyCode::Enter);
+    assert!(collapse.actions.is_empty() && collapse.repaint);
+    assert!(state.overlay.is_none());
+    assert_eq!(
+        state.collapsed_groups,
+        HashSet::from(["group:A".to_owned()])
+    );
+    assert_eq!(
+        body_lines(&mut state, 2),
+        [format!(" ▸ {icon} A"), format!(" {icon} plain")]
+    );
+
+    open_header_menu(&mut state, "A");
+    let (target, labels) = open_menu(&state);
+    assert!(matches!(
+        target,
+        ClientContextMenuTarget::SpaceGroup { name, collapsed: true } if name == "A"
+    ));
+    assert_eq!(labels, ["Expand", "Rename group..."]);
+    key(&mut state, KeyCode::Esc);
+    assert!(state.overlay.is_none());
+    assert!(
+        state.collapsed_groups.contains("group:A"),
+        "Esc does nothing"
+    );
+
+    open_header_menu(&mut state, "A");
+    assert!(choose(&mut state, "Expand").actions.is_empty());
+    assert!(state.overlay.is_none() && state.collapsed_groups.is_empty());
+    assert_eq!(
+        body_lines(&mut state, 4),
+        [
+            " ▾ A".to_owned(),
+            format!("   {icon} one"),
+            format!("   {icon} two"),
+            format!(" {icon} plain"),
+        ]
+    );
+
+    // Not from a sidebar that was just collapsed (its header hits are from the last frame).
+    state.sidebar_collapsed = true;
+    assert!(right_click(&mut state, pointer).actions.is_empty());
+    assert!(state.overlay.is_none());
+}
+
+#[test]
+fn the_header_menu_folds_and_saves_like_a_click() {
+    let path = preferences_file(r#"{"collapsed_groups":["/repo"]}"#);
+    let mut state = with_preferences(&path, focused_on(named_spaces(&["A/one", "plain"]), "ws_2"));
+    let icon = icon(&state);
+
+    open_header_menu(&mut state, "A");
+    choose(&mut state, "Collapse");
+    let stored = std::fs::read_to_string(&path).expect("stored preferences");
+    assert!(
+        stored.contains("/repo") && stored.contains("\"group:A\""),
+        "{stored}"
+    );
+    let mut reopened =
+        with_preferences(&path, focused_on(named_spaces(&["A/one", "plain"]), "ws_2"));
+    assert_eq!(body_lines(&mut reopened, 1), [format!(" ▸ {icon} A")]);
+
+    open_header_menu(&mut state, "A");
+    choose(&mut state, "Expand");
+    let stored = std::fs::read_to_string(&path).expect("stored preferences");
+    assert!(
+        stored.contains("/repo") && !stored.contains("group:A"),
+        "{stored}"
+    );
+    std::fs::remove_file(path).expect("remove preferences");
+}
+
+#[test]
+fn right_clicking_a_group_member_still_opens_the_space_menu() {
+    let mut state = grouped_state(named_spaces(&["A/one", "A/two", "plain"]));
+    state.compose(106, 30).expect("composed frame");
+    let point = space_point(&state, "ws_2");
+    assert!(right_click(&mut state, point).actions.is_empty());
+    let (target, labels) = open_menu(&state);
+    assert!(matches!(
+        target,
+        ClientContextMenuTarget::Workspace { workspace_id, .. } if workspace_id == "ws_2"
+    ));
+    assert_eq!(labels, ["Rename", "Close"]);
+
+    choose(&mut state, "Rename");
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::Rename(ClientRenameOverlay {
+            title: "rename workspace",
+            ref input,
+            target: ClientRenameTarget::Workspace { ref workspace_id },
+        })) if input.as_str() == "A/two" && workspace_id == "ws_2"
+    ));
+}
+
+#[test]
+fn rename_group_renames_every_member_by_its_own_name() {
+    let mut projected = named_spaces(&[
+        "Web/one",
+        "plain",
+        "Web / two",
+        "Other/x",
+        "Web/app/x",
+        "web/y",
+        "Web/p",
+        "c1",
+        "Other/c2",
+        "Webby/z",
+    ]);
+    projected.workspaces.push(space(11, "Web/auto", false));
+    // `Web/p` heads a worktree block whose linked children are named otherwise.
+    in_worktree(&mut projected, 7, false);
+    in_worktree(&mut projected, 8, true);
+    in_worktree(&mut projected, 9, true);
+    let mut state = grouped_state(projected);
+    let icon = icon(&state);
+    let web_rows = [
+        " ▾ Web".to_owned(),
+        format!("   {icon} one"),
+        format!("   {icon} two"),
+        format!("   {icon} app/x"),
+        format!("   {icon} p"),
+        format!("     ├─ {icon} c1"),
+        format!("     └─ {icon} Other/c2"),
+    ];
+    let lines = body_lines(&mut state, 7)
+        .iter()
+        .map(|line| without_toggle(line))
+        .collect::<Vec<_>>();
+    assert_eq!(lines, web_rows, "the children are drawn in Web");
+
+    open_group_rename(&mut state, "Web");
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::Rename(ClientRenameOverlay {
+            title: "rename group",
+            ref input,
+            target: ClientRenameTarget::SpaceGroup { ref name },
+        })) if input.as_str() == "Web" && name == "Web"
+    ));
+    let renames = submit_rename(&mut state, "  Sites  ");
+    assert_eq!(
+        renames,
+        renamed(&[
+            ("ws_1", "Sites/one"),
+            ("ws_3", "Sites/two"),
+            ("ws_5", "Sites/app/x"),
+            ("ws_7", "Sites/p"),
+        ])
+    );
+    assert!(state.collapsed_groups.is_empty());
+
+    apply_renames(&mut state, &renames);
+    let lines = body_lines(&mut state, 7)
+        .iter()
+        .map(|line| without_toggle(line))
+        .collect::<Vec<_>>();
+    let mut sites_rows = web_rows;
+    sites_rows[0] = " ▾ Sites".to_owned();
+    assert_eq!(lines, sites_rows, "the same rows under the new name");
+}
+
+#[test]
+fn renaming_a_folded_group_moves_its_fold() {
+    let path = preferences_file(r#"{"collapsed_groups":["/repo","group:A"]}"#);
+    let mut state = with_preferences(
+        &path,
+        focused_on(named_spaces(&["A/one", "A/two", "plain"]), "ws_3"),
+    );
+    let icon = icon(&state);
+    assert_eq!(body_lines(&mut state, 1), [format!(" ▸ {icon} A")]);
+
+    open_group_rename(&mut state, "A");
+    let renames = submit_rename(&mut state, "B");
+    assert_eq!(renames, renamed(&[("ws_1", "B/one"), ("ws_2", "B/two")]));
+    assert_eq!(
+        state.collapsed_groups,
+        HashSet::from(["/repo".to_owned(), "group:B".to_owned()])
+    );
+    let stored = std::fs::read_to_string(&path).expect("stored preferences");
+    assert!(
+        stored.contains("/repo") && stored.contains("\"group:B\"") && !stored.contains("group:A"),
+        "{stored}"
+    );
+
+    apply_renames(&mut state, &renames);
+    assert_eq!(
+        body_lines(&mut state, 3),
+        [
+            format!(" ▸ {icon} B"),
+            format!(" {icon} plain"),
+            String::new()
+        ]
+    );
+    std::fs::remove_file(path).expect("remove preferences");
+}
+
+#[test]
+fn renaming_a_group_onto_another_merges_them() {
+    let mut state = grouped_state(focused_on(
+        named_spaces(&["A/one", "plain", "B/two", "A/three"]),
+        "ws_2",
+    ));
+    let icon = icon(&state);
+    state.collapsed_groups.insert("group:B".into());
+
+    open_group_rename(&mut state, "A");
+    let renames = submit_rename(&mut state, "B");
+    assert_eq!(renames, renamed(&[("ws_1", "B/one"), ("ws_4", "B/three")]));
+    assert_eq!(
+        state.collapsed_groups,
+        HashSet::from(["group:B".to_owned()])
+    );
+
+    apply_renames(&mut state, &renames);
+    assert_eq!(
+        body_lines(&mut state, 3),
+        [
+            format!(" ▸ {icon} B"),
+            format!(" {icon} plain"),
+            String::new()
+        ],
+        "one group, at its first member's place, folded as B was"
+    );
+    click_header(&mut state, "B");
+    assert_eq!(
+        body_lines(&mut state, 5),
+        [
+            " ▾ B".to_owned(),
+            format!("   {icon} one"),
+            format!("   {icon} two"),
+            format!("   {icon} three"),
+            format!(" {icon} plain"),
+        ]
+    );
+}
+
+#[test]
+fn rename_group_sends_nothing_for_an_empty_slashed_or_unchanged_name() {
+    let mut state = grouped_state(focused_on(
+        named_spaces(&["A/one", "A/two", "plain"]),
+        "ws_3",
+    ));
+    state.collapsed_groups.insert("group:A".into());
+    for text in ["", "   ", "a/b", "/", "B/", "A", "  A "] {
+        open_group_rename(&mut state, "A");
+        assert_eq!(submit_rename(&mut state, text), [], "{text:?}");
+        assert_eq!(
+            state.collapsed_groups,
+            HashSet::from(["group:A".to_owned()]),
+            "{text:?}"
+        );
+    }
+}
+
+#[test]
+fn group_rename_plans_and_fold_moves_need_no_window() {
+    use crate::client::shell::space_groups::{group_renames, header_menu_items, move_fold};
+
+    let labels = |collapsed| {
+        header_menu_items(collapsed)
+            .iter()
+            .map(|item| (item.label, item.action))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        labels(false),
+        [
+            ("Collapse", ClientContextMenuAction::ToggleGroup),
+            ("Rename group...", ClientContextMenuAction::Rename),
+        ]
+    );
+    assert_eq!(
+        labels(true)[0],
+        ("Expand", ClientContextMenuAction::ToggleGroup)
+    );
+
+    let projected = named_spaces(&["A/one", "A / two", "AB/x", "plain"]);
+    assert_eq!(
+        group_renames(&projected, "A", "C"),
+        renamed(&[("ws_1", "C/one"), ("ws_2", "C/two")])
+    );
+    assert_eq!(group_renames(&projected, "Z", "C"), []);
+    for new in ["", "A", "C/D"] {
+        assert_eq!(group_renames(&projected, "A", new), [], "{new:?}");
+    }
+
+    let mut folds = HashSet::from(["/repo".to_owned()]);
+    assert!(!move_fold(&mut folds, "A", "C"));
+    assert_eq!(folds, HashSet::from(["/repo".to_owned()]));
+    folds.insert("group:A".into());
+    assert!(move_fold(&mut folds, "A", "C"));
+    assert_eq!(
+        folds,
+        HashSet::from(["/repo".to_owned(), "group:C".to_owned()])
+    );
+    folds.insert("group:D".into());
+    assert!(move_fold(&mut folds, "C", "D"));
+    assert_eq!(
+        folds,
+        HashSet::from(["/repo".to_owned(), "group:D".to_owned()])
+    );
+}
+
+#[test]
+fn a_refused_group_rename_keeps_the_fold() {
+    let mut state = grouped_state(focused_on(
+        named_spaces(&["A/one", "A/two", "plain"]),
+        "ws_3",
+    ));
+    state.collapsed_groups.insert("group:A".into());
+
+    // The machine drops while the box is open: the renames are refused.
+    open_group_rename(&mut state, "A");
+    state.set_endpoint_status(&ClientEndpointId::Local, ClientEndpointStatus::Reconnecting);
+    assert_eq!(submit_rename(&mut state, "B"), []);
+    assert_eq!(
+        state.collapsed_groups,
+        HashSet::from(["group:A".to_owned()])
+    );
+
+    state.set_endpoint_status(&ClientEndpointId::Local, ClientEndpointStatus::Online);
+    open_group_rename(&mut state, "A");
+    assert_eq!(
+        submit_rename(&mut state, "B"),
+        renamed(&[("ws_1", "B/one"), ("ws_2", "B/two")])
+    );
+    assert_eq!(
+        state.collapsed_groups,
+        HashSet::from(["group:B".to_owned()])
+    );
+}
+
+#[test]
+fn folding_a_group_that_went_away_while_its_menu_was_open_does_nothing() {
+    let mut state = grouped_state(focused_on(
+        named_spaces(&["A/one", "A/two", "plain"]),
+        "ws_3",
+    ));
+    let away = renamed(&[("ws_1", "Z/one"), ("ws_2", "Z/two")]);
+
+    open_header_menu(&mut state, "A");
+    apply_renames(&mut state, &away);
+    assert!(choose(&mut state, "Collapse").actions.is_empty());
+    assert!(state.overlay.is_none());
+    assert!(state.collapsed_groups.is_empty(), "no stale group:A");
+
+    // Folded, then gone: Expand leaves the set alone too.
+    let mut state = grouped_state(focused_on(
+        named_spaces(&["A/one", "A/two", "plain"]),
+        "ws_3",
+    ));
+    state.collapsed_groups.insert("group:A".into());
+    open_header_menu(&mut state, "A");
+    apply_renames(&mut state, &away);
+    choose(&mut state, "Expand");
+    assert_eq!(
+        state.collapsed_groups,
+        HashSet::from(["group:A".to_owned()])
+    );
+}
+
+#[test]
+fn a_held_left_press_does_not_fold_the_group_under_its_menu() {
+    let mut state = grouped_state(focused_on(
+        named_spaces(&["A/one", "A/two", "plain"]),
+        "ws_3",
+    ));
+    state.compose(106, 30).expect("composed frame");
+    let header = header_point(&state, "A");
+
+    mouse(&mut state, MouseEventKind::Down(MouseButton::Left), header);
+    right_click(&mut state, header);
+    let release = mouse(&mut state, MouseEventKind::Up(MouseButton::Left), header);
+    assert!(release.actions.is_empty());
+    assert!(state.collapsed_groups.is_empty());
+    assert_eq!(open_menu(&state).1, ["Collapse", "Rename group..."]);
+
+    choose(&mut state, "Collapse");
+    assert_eq!(
+        state.collapsed_groups,
+        HashSet::from(["group:A".to_owned()])
+    );
+}
+
+#[test]
+fn rename_group_renames_members_drawn_elsewhere_or_hidden() {
+    let mut projected = named_spaces(&["Web/one", "Other/p", "Web/c", "plain", "Web/two"]);
+    // `Web/c` is a linked child of `Other/p`'s block, so it is drawn under Other.
+    in_worktree(&mut projected, 2, false);
+    in_worktree(&mut projected, 3, true);
+    let mut state = grouped_state(focused_on(projected, "ws_4"));
+    let icon = icon(&state);
+    state.collapsed_groups = HashSet::from(["group:Web".to_owned(), "/repo/.git".to_owned()]);
+    let lines = body_lines(&mut state, 4)
+        .iter()
+        .map(|line| without_toggle(line))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lines,
+        [
+            format!(" ▸ {icon} Web"),
+            " ▾ Other".to_owned(),
+            format!("   {icon} p"),
+            format!(" {icon} plain"),
+        ],
+        "every Web member hidden by a fold"
+    );
+
+    open_group_rename(&mut state, "Web");
+    let renames = submit_rename(&mut state, "Sites");
+    assert_eq!(
+        renames,
+        renamed(&[
+            ("ws_1", "Sites/one"),
+            ("ws_3", "Sites/c"),
+            ("ws_5", "Sites/two"),
+        ])
+    );
+    assert_eq!(
+        state.collapsed_groups,
+        HashSet::from(["group:Sites".to_owned(), "/repo/.git".to_owned()])
+    );
+
+    apply_renames(&mut state, &renames);
+    state.collapsed_groups.remove("/repo/.git");
+    let lines = body_lines(&mut state, 5)
+        .iter()
+        .map(|line| without_toggle(line))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lines,
+        [
+            format!(" ▸ {icon} Sites"),
+            " ▾ Other".to_owned(),
+            format!("   {icon} p"),
+            format!("     └─ {icon} Sites/c"),
+            format!(" {icon} plain"),
+        ]
+    );
+}
+
+#[test]
+fn cancelling_the_group_rename_box_or_menu_sends_nothing() {
+    let mut state = grouped_state(focused_on(
+        named_spaces(&["A/one", "A/two", "plain"]),
+        "ws_3",
+    ));
+    state.collapsed_groups.insert("group:A".into());
+
+    for way in ["Esc", "cancel button", "click outside"] {
+        open_group_rename(&mut state, "A");
+        let mut actions = state.handle_input_bytes(&[0x15]).actions;
+        actions.extend(state.handle_input_bytes(b"B").actions);
+        state.compose(106, 30).expect("rename box frame");
+        let cancel = state.hits.overlay_cancel;
+        actions.extend(
+            match way {
+                "Esc" => key(&mut state, KeyCode::Esc),
+                "cancel button" => click_input(&mut state, (cancel.x + 1, cancel.y)),
+                _ => click_input(&mut state, (0, 0)),
+            }
+            .actions,
+        );
+        assert!(state.overlay.is_none(), "{way}");
+        assert!(actions.is_empty(), "{way}");
+        assert_eq!(
+            state.collapsed_groups,
+            HashSet::from(["group:A".to_owned()]),
+            "{way}"
+        );
+    }
+
+    // A click outside the header menu closes it without reaching the space under it.
+    open_header_menu(&mut state, "A");
+    let plain = space_point(&state, "ws_3");
+    assert!(click(&mut state, plain).is_empty());
+    assert!(state.overlay.is_none());
+    assert_eq!(
+        state.collapsed_groups,
+        HashSet::from(["group:A".to_owned()])
+    );
+}
+
+/// A left press at `point` (a click on a popup acts on the press).
+fn click_input(state: &mut ClientShellState, point: (u16, u16)) -> ClientShellInput {
+    mouse(state, MouseEventKind::Down(MouseButton::Left), point)
+}
+
+#[test]
+fn the_header_menu_on_a_scrolled_sidebar_opens_for_the_group_drawn_there() {
+    let mut state = grouped_state(ten_groups());
+    let icon = icon(&state);
+    state.compose(106, 20).expect("composed frame");
+    state.workspace_scroll = 6;
+    assert_eq!(
+        body_lines_at(&mut state, 20, 2),
+        [" ▾ G4".to_owned(), format!("   {icon} space4")]
+    );
+    let body = state.hits.workspace_body;
+    assert!(state.hits.group_headers.iter().all(|hit| hit.group != "G1"));
+
+    assert!(right_click(&mut state, (body.x + 4, body.y))
+        .actions
+        .is_empty());
+    assert!(matches!(
+        open_menu(&state).0,
+        ClientContextMenuTarget::SpaceGroup { name, .. } if name == "G4"
+    ));
+    key(&mut state, KeyCode::Esc);
+
+    right_click(&mut state, (body.x + 4, body.y + 1));
+    assert!(matches!(
+        open_menu(&state).0,
+        ClientContextMenuTarget::Workspace { workspace_id, .. } if workspace_id == "ws_4"
+    ));
 }
