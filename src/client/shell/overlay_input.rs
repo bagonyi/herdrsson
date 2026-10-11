@@ -987,6 +987,10 @@ impl ClientShellState {
                     label: Some(trimmed.to_owned()),
                 },
             )),
+            ClientRenameTarget::SpaceGroup { name } => {
+                self.rename_space_group(&name, trimmed, outcome);
+                None
+            }
         };
         if let Some(method) = method {
             self.push_endpoint_method(method, outcome);

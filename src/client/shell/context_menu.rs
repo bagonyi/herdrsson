@@ -79,6 +79,9 @@ impl ClientContextMenuOverlay {
                 ]);
                 items
             }
+            ClientContextMenuTarget::SpaceGroup { collapsed, .. } => {
+                super::space_groups::header_menu_items(*collapsed)
+            }
         }
     }
 }
@@ -215,6 +218,9 @@ impl ClientShellState {
                 action,
                 outcome,
             ),
+            ClientContextMenuTarget::SpaceGroup { name, .. } => {
+                self.activate_group_header_action(name, action, outcome)
+            }
         }
         outcome.repaint = true;
     }
