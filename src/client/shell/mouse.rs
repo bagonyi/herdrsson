@@ -1841,6 +1841,9 @@ impl ClientShellState {
                 if !self.config.mouse_capture {
                     return;
                 }
+                if self.open_group_header_menu(point, outcome) {
+                    return;
+                }
                 let workspace_id = (!self.sidebar_collapsed)
                     .then(|| self.active_endpoint_workspace_at(point))
                     .flatten();
