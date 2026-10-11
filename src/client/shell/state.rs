@@ -320,6 +320,10 @@ pub(super) enum ClientRenameTarget {
     SpaceGroup {
         name: String,
     },
+    /// A space's name from "Move to group" → "New group..." (`space_groups`).
+    SpaceNewGroup {
+        workspace_id: String,
+    },
 }
 
 #[derive(Debug)]
@@ -530,6 +534,11 @@ pub(super) enum ClientContextMenuAction {
     Zoom,
     ToggleRightClickPassthrough,
     ClosePane,
+    // A space's "Move to group" and the second menu it opens (`space_groups`).
+    MoveToGroup,
+    JoinGroup(usize),
+    NewGroup,
+    LeaveGroup,
 }
 
 #[derive(Debug)]
@@ -541,6 +550,8 @@ pub(super) enum ClientContextMenuTarget {
         has_worktree_children: bool,
         close_group: bool,
         collapsed: bool,
+        /// Offers "Move to group" (`space_groups`).
+        move_to_group: bool,
     },
     Tab {
         tab_id: String,
@@ -555,6 +566,12 @@ pub(super) enum ClientContextMenuTarget {
     },
     /// A sidebar space group's header (`space_groups`).
     SpaceGroup { name: String, collapsed: bool },
+    /// A space's "Move to group" menu: `groups` are the other groups (`space_groups`).
+    MoveToGroup {
+        workspace_id: String,
+        groups: Vec<String>,
+        in_group: bool,
+    },
 }
 
 #[derive(Debug)]
@@ -566,7 +583,7 @@ pub(super) struct ClientContextMenuOverlay {
 }
 
 pub(super) struct ClientContextMenuItem {
-    pub(super) label: &'static str,
+    pub(super) label: std::borrow::Cow<'static, str>,
     pub(super) action: ClientContextMenuAction,
 }
 
