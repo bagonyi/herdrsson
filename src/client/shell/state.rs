@@ -85,6 +85,7 @@ pub(super) enum ClientMobileTarget {
 pub(super) struct ShellHitMap {
     pub(super) machines: Vec<MachineHit>,
     pub(super) workspaces: Vec<WorkspaceHit>,
+    pub(super) group_headers: Vec<super::space_groups::GroupHeaderHit>,
     pub(super) workspace_body: Rect,
     pub(super) workspace_scrollbar: Rect,
     pub(super) workspace_scroll_metrics: Option<crate::pane::ScrollMetrics>,
@@ -880,6 +881,7 @@ pub(crate) struct ClientShellState {
     pub(super) chrome_drag: Option<ClientChromeDrag>,
     pub(super) workspace_press: Option<ClientWorkspacePress>,
     pub(super) tab_press: Option<ClientTabPress>,
+    pub(super) group_header_press: Option<super::space_groups::GroupHeaderPress>,
     pub(super) collapsed_groups: HashSet<String>,
     pub(super) remote_collapsed_groups: HashMap<ClientEndpointId, HashSet<String>>,
     pub(super) workspace_scroll: usize,
@@ -1054,6 +1056,7 @@ impl ClientShellState {
             chrome_drag: None,
             workspace_press: None,
             tab_press: None,
+            group_header_press: None,
             collapsed_groups: preferences.collapsed_groups.into_iter().collect(),
             remote_collapsed_groups,
             workspace_scroll: 0,
@@ -1208,9 +1211,12 @@ impl ClientShellState {
         {
             return;
         }
+        if self.reveal_folded_member(workspace_id) {
+            return;
+        }
         let target = self.snapshot.as_deref().and_then(|snapshot| {
             let entries = self.navigation_workspace_entries(snapshot);
-            super::space_groups::reveal_row(snapshot, entries, workspace_id)
+            super::space_groups::reveal_row(snapshot, entries, &self.collapsed_groups, workspace_id)
         });
         if let Some(target) = target {
             self.workspace_scroll = target.min(self.hits.workspace_max_scroll);
@@ -1244,6 +1250,7 @@ impl ClientShellState {
         self.chrome_drag = None;
         self.workspace_press = None;
         self.tab_press = None;
+        self.group_header_press = None;
         self.workspace_scroll = 0;
         self.agent_scroll = 0;
         self.tab_scroll = 0;

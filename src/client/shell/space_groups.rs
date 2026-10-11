@@ -1,17 +1,41 @@
 //! Space groups: a space the user named `Web/Miniteam` is drawn as `Miniteam` under a ` ▾ Web`
 //! header in the one-machine sidebar. Only the window knows about groups; the server keeps the
-//! full name and its own order.
+//! full name and its own order. A click on a header folds the group (` ▸ ✓ Web`).
 
 use super::render::put_segment;
 use super::*;
+use crate::api::schema::AgentStatus;
 
 /// Columns a group's member rows are indented by.
 const MEMBER_INDENT: u16 = 2;
 
+/// A named group's key in the window's `collapsed_groups` set, next to the worktree folds (whose
+/// keys are absolute paths, so the two never collide).
+pub(super) fn fold_key(group: &str) -> String {
+    format!("group:{group}")
+}
+
+/// A group header's place in the sidebar, for clicks. Never a `WorkspaceHit`.
+pub(super) struct GroupHeaderHit {
+    pub(super) rect: Rect,
+    pub(super) group: String,
+}
+
+/// A left press on a group header, waiting for its release.
+pub(super) struct GroupHeaderPress {
+    group: String,
+    start: (u16, u16),
+    dragged: bool,
+}
+
 /// One row of the one-machine sidebar's space list.
 pub(super) enum SidebarRow<'a> {
-    /// A group's header. Not a space, so it never gets a workspace hit.
-    Header(&'a str),
+    /// A group's header, with its members' rolled-up status when the group is folded. Not a
+    /// space, so it never gets a workspace hit.
+    Header {
+        name: &'a str,
+        folded: Option<AgentStatus>,
+    },
     /// A space row, with the named group it is drawn in and the short name it shows there.
     Space {
         entry: WorkspaceEntry,
@@ -23,7 +47,7 @@ pub(super) enum SidebarRow<'a> {
 impl SidebarRow<'_> {
     pub(super) fn entry(&self) -> Option<&WorkspaceEntry> {
         match self {
-            Self::Header(_) => None,
+            Self::Header { .. } => None,
             Self::Space { entry, .. } => Some(entry),
         }
     }
@@ -31,7 +55,7 @@ impl SidebarRow<'_> {
     /// Rows `row_gap` goes before: headers, and spaces outside groups and worktree blocks.
     pub(super) fn starts_top_level(&self) -> bool {
         match self {
-            Self::Header(_) => true,
+            Self::Header { .. } => true,
             Self::Space { entry, group, .. } => group.is_none() && !entry.indented,
         }
     }
@@ -71,11 +95,14 @@ pub(super) fn group_entries(
 }
 
 /// The drawn rows: `entries` (upstream's or already grouped) in navigation order, with a header
-/// before each group's members.
-pub(super) fn sidebar_rows(
-    snapshot: &ClientShellSnapshot,
+/// before each group's members. A folded group keeps only its focused member and `preview` (the
+/// Navigate mode selection), so navigation can still visit every space.
+pub(super) fn sidebar_rows<'a>(
+    snapshot: &'a ClientShellSnapshot,
     entries: Vec<WorkspaceEntry>,
-) -> Vec<SidebarRow<'_>> {
+    collapsed_groups: &HashSet<String>,
+    preview: Option<&str>,
+) -> Vec<SidebarRow<'a>> {
     if !has_groups(snapshot) {
         return entries
             .into_iter()
@@ -86,42 +113,176 @@ pub(super) fn sidebar_rows(
             })
             .collect();
     }
-    let mut rows = Vec::with_capacity(entries.len());
-    let mut previous = None;
-    for (entry, group) in grouped(snapshot, &entries) {
-        if let Some(name) = group.filter(|_| group != previous) {
-            rows.push(SidebarRow::Header(name));
-        }
-        previous = group;
-        // A worktree child keeps its own name unless that name is in its block's group.
+    let grouped = grouped(snapshot, &entries);
+    let mut rows = Vec::with_capacity(grouped.len());
+    // A worktree child keeps its own name unless that name is in its block's group.
+    let space_row = |entry: WorkspaceEntry, group: Option<&'a str>| {
         let label = group.and_then(|group| {
             let (own, short) = split_name(snapshot.workspaces.get(entry.index)?)?;
             (own == group).then_some(short)
         });
-        rows.push(SidebarRow::Space {
+        SidebarRow::Space {
             entry,
             group,
             label,
+        }
+    };
+    // Gathering made each group one run of entries.
+    for run in grouped.chunk_by(|(_, left), (_, right)| left == right) {
+        let Some(name) = run.first().and_then(|(_, group)| *group) else {
+            rows.extend(run.iter().map(|(entry, _)| space_row(*entry, None)));
+            continue;
+        };
+        let members = run.iter().map(|(entry, _)| *entry);
+        if !collapsed_groups.contains(&fold_key(name)) {
+            rows.push(SidebarRow::Header { name, folded: None });
+            rows.extend(members.map(|entry| space_row(entry, Some(name))));
+            continue;
+        }
+        let members = members.collect::<Vec<_>>();
+        rows.push(SidebarRow::Header {
+            name,
+            folded: Some(rolled_up_status(snapshot, &members, collapsed_groups)),
         });
+        rows.extend(
+            folded_members(snapshot, &members, preview)
+                .into_iter()
+                .map(|entry| space_row(entry, Some(name))),
+        );
     }
     rows
 }
 
+/// A folded group's status: its most urgent member's, a folded worktree block counting its
+/// hidden children through its parent row.
+fn rolled_up_status(
+    snapshot: &ClientShellSnapshot,
+    members: &[WorkspaceEntry],
+    collapsed_groups: &HashSet<String>,
+) -> AgentStatus {
+    members
+        .iter()
+        .filter_map(|entry| snapshot.workspaces.get(entry.index))
+        .map(|workspace| {
+            super::sidebar::displayed_workspace_status(snapshot, workspace, collapsed_groups)
+        })
+        .max_by_key(|status| status_priority(*status))
+        .unwrap_or(AgentStatus::Unknown)
+}
+
+/// The members a folded group still shows: the focused space and the Navigate preview. A worktree
+/// child comes with its block's parent rows, and is drawn as the last child shown.
+fn folded_members(
+    snapshot: &ClientShellSnapshot,
+    members: &[WorkspaceEntry],
+    preview: Option<&str>,
+) -> Vec<WorkspaceEntry> {
+    let worktree_key = |entry: &WorkspaceEntry| {
+        snapshot
+            .workspaces
+            .get(entry.index)
+            .and_then(|workspace| workspace.worktree.as_ref())
+            .map(|worktree| worktree.key.as_str())
+    };
+    let mut shown = vec![false; members.len()];
+    for (position, entry) in members.iter().enumerate() {
+        let Some(workspace) = snapshot.workspaces.get(entry.index) else {
+            continue;
+        };
+        if !workspace.focused && preview != Some(workspace.workspace_id.as_str()) {
+            continue;
+        }
+        shown[position] = true;
+        let Some(key) = worktree_key(entry).filter(|_| entry.indented) else {
+            continue;
+        };
+        // The parent rows are the unindented rows of the repository right above its children.
+        for (parent, _) in members[..position]
+            .iter()
+            .enumerate()
+            .rev()
+            .skip_while(|(_, above)| above.indented)
+            .take_while(|(_, above)| !above.indented && worktree_key(above) == Some(key))
+        {
+            shown[parent] = true;
+        }
+    }
+    let mut visible = members
+        .iter()
+        .zip(shown)
+        .filter_map(|(entry, shown)| shown.then_some(*entry))
+        .collect::<Vec<_>>();
+    for position in 0..visible.len() {
+        let next_is_child = visible.get(position + 1).is_some_and(|next| next.indented);
+        if let Some(entry) = visible.get_mut(position).filter(|entry| entry.indented) {
+            entry.last_child = !next_is_child;
+        }
+    }
+    visible
+}
+
 /// The sidebar row (headers counted, the unit of its scroll) to put at the top to show a space:
-/// the space's own row, or its group's header when it is the group's first member. `entries` is
-/// the navigation list.
+/// the space's own row, or its group's header when it is the group's first drawn member.
+/// `entries` is the navigation list. The space is counted as shown even in a folded group, as it
+/// is about to be focused or previewed.
 pub(super) fn reveal_row(
     snapshot: &ClientShellSnapshot,
     entries: Vec<WorkspaceEntry>,
+    collapsed_groups: &HashSet<String>,
     workspace_id: &str,
 ) -> Option<usize> {
-    let rows = sidebar_rows(snapshot, entries);
+    let rows = sidebar_rows(snapshot, entries, collapsed_groups, Some(workspace_id));
     let position = rows.iter().position(|row| {
         row.entry()
             .and_then(|entry| snapshot.workspaces.get(entry.index))
             .is_some_and(|workspace| workspace.workspace_id == workspace_id)
     })?;
     Some(header_above(&rows, position).unwrap_or(position))
+}
+
+/// Each row's height in lines, as the sidebar draws it.
+pub(super) fn row_heights(
+    snapshot: &ClientShellSnapshot,
+    rows: &[SidebarRow<'_>],
+    collapsed_groups: &HashSet<String>,
+    spaces: &SpacesSidebarConfig,
+) -> Vec<u16> {
+    use super::sidebar::{displayed_workspace_status, labeled_workspace_rows};
+
+    rows.iter()
+        .map(|row| {
+            let SidebarRow::Space { entry, label, .. } = row else {
+                return 1;
+            };
+            snapshot
+                .workspaces
+                .get(entry.index)
+                .map(|workspace| {
+                    labeled_workspace_rows(
+                        workspace,
+                        *label,
+                        displayed_workspace_status(snapshot, workspace, collapsed_groups),
+                        entry.indented,
+                        spaces,
+                    )
+                    .len()
+                    .max(1)
+                    .min(u16::MAX as usize) as u16
+                })
+                .unwrap_or(1)
+        })
+        .collect()
+}
+
+/// The `row_gap` lines after each row: before each top-level row that follows.
+pub(super) fn row_gaps(rows: &[SidebarRow<'_>], row_gap: u16) -> Vec<u16> {
+    rows.iter()
+        .enumerate()
+        .map(|(index, _)| {
+            rows.get(index + 1)
+                .map_or(0, |next| u16::from(next.starts_top_level()) * row_gap)
+        })
+        .collect()
 }
 
 /// The scroll start that shows row `target`, and its group's header above it as well when the
@@ -152,7 +313,7 @@ pub(super) fn reveal_start(
 
 fn header_above(rows: &[SidebarRow<'_>], position: usize) -> Option<usize> {
     let above = position.checked_sub(1)?;
-    matches!(rows.get(above), Some(SidebarRow::Header(_))).then_some(above)
+    matches!(rows.get(above), Some(SidebarRow::Header { .. })).then_some(above)
 }
 
 /// The collapsed rail's spaces, all of them (no folds): in the grouped order when any space has
@@ -289,14 +450,141 @@ pub(super) fn fill_indent(buffer: &mut Buffer, rect: Rect, content: Rect) {
     }
 }
 
-/// A group's header row, ` ▾ Web`, bold like the multi-machine sidebar's machine rows.
-pub(super) fn render_header(buffer: &mut Buffer, rect: Rect, name: &str, palette: &Palette) {
+/// A group's header row, ` ▾ Web`, bold like the multi-machine sidebar's machine rows; folded,
+/// ` ▸ ✓ Web` with the rolled-up status icon.
+pub(super) fn render_header(
+    buffer: &mut Buffer,
+    rect: Rect,
+    name: &str,
+    folded: Option<AgentStatus>,
+    config: &ClientShellConfig,
+) -> GroupHeaderHit {
+    let palette = &config.palette;
     let style = Style::default()
         .fg(palette.text)
         .add_modifier(Modifier::BOLD);
     // Leave the last two columns free, as space rows do.
-    let right = rect.right().saturating_sub(2);
-    let x = put_segment(buffer, rect.x.saturating_add(1), rect.y, right, "▾ ", style);
-    let name = crate::ui::truncate_end(name, usize::from(right.saturating_sub(x)));
-    put_segment(buffer, x, rect.y, right, &name, style);
+    let (y, right) = (rect.y, rect.right().saturating_sub(2));
+    let chevron = if folded.is_some() { "▸ " } else { "▾ " };
+    let mut x = put_segment(buffer, rect.x.saturating_add(1), y, right, chevron, style);
+    if let Some(status) = folded {
+        let icon_style = Style::default().fg(status_color(status, palette));
+        let icon = status_icon(status, config.status_indicators);
+        x = put_segment(buffer, x, y, right, icon, icon_style);
+        x = put_segment(buffer, x, y, right, " ", icon_style);
+    }
+    let name_text = crate::ui::truncate_end(name, usize::from(right.saturating_sub(x)));
+    put_segment(buffer, x, y, right, &name_text, style);
+    GroupHeaderHit {
+        rect,
+        group: name.to_owned(),
+    }
+}
+
+impl ClientShellState {
+    /// Folds or unfolds a named group of the one-machine sidebar and saves the fold state.
+    pub(super) fn toggle_group_fold(&mut self, group: &str, outcome: &mut ClientShellInput) {
+        self.toggle_collapsed_group(&ClientEndpointId::Local, fold_key(group));
+        outcome.repaint = true;
+        self.persist_chrome_preferences(outcome);
+    }
+
+    /// Scrolls the one-machine sidebar as little as needed to show `workspace_id` when it is a
+    /// member of a folded group, which the next frame draws (focused or previewed) though the
+    /// last one may not have: its row is predicted from the rows as they will be drawn, with its
+    /// header when it is the first member drawn. False for any other space, which keeps
+    /// upstream's reveal.
+    pub(super) fn reveal_folded_member(&mut self, workspace_id: &str) -> bool {
+        if self.endpoints.len() != 1 || self.sidebar_collapsed || self.mobile_layout_active() {
+            return false;
+        }
+        let Some(snapshot) = self
+            .snapshot
+            .as_deref()
+            .filter(|snapshot| has_groups(snapshot))
+        else {
+            return false;
+        };
+        let entries = self.navigation_workspace_entries(snapshot);
+        let rows = sidebar_rows(
+            snapshot,
+            entries,
+            &self.collapsed_groups,
+            Some(workspace_id),
+        );
+        let Some(target) = rows.iter().position(|row| {
+            row.entry()
+                .and_then(|entry| snapshot.workspaces.get(entry.index))
+                .is_some_and(|workspace| workspace.workspace_id == workspace_id)
+        }) else {
+            return false;
+        };
+        let header_folded = rows[..target].iter().rev().find_map(|row| match row {
+            SidebarRow::Header { folded, .. } => Some(folded.is_some()),
+            SidebarRow::Space { .. } => None,
+        });
+        let grouped = matches!(rows[target], SidebarRow::Space { group: Some(_), .. });
+        if !grouped || header_folded != Some(true) {
+            return false;
+        }
+        let heights = row_heights(snapshot, &rows, &self.collapsed_groups, &self.config.spaces);
+        let gaps = row_gaps(&rows, self.config.spaces.row_gap);
+        self.workspace_scroll = reveal_start(
+            &rows,
+            &heights,
+            &gaps,
+            self.hits.workspace_body.height,
+            self.workspace_scroll,
+            target,
+        );
+        true
+    }
+
+    /// Records a left press on a group header; true when there was one under the pointer.
+    pub(super) fn press_group_header(&mut self, point: (u16, u16)) -> bool {
+        let Some(hit) = self
+            .hits
+            .group_headers
+            .iter()
+            .find(|hit| super::contains(hit.rect, point))
+        else {
+            return false;
+        };
+        self.group_header_press = Some(GroupHeaderPress {
+            group: hit.group.clone(),
+            start: point,
+            dragged: false,
+        });
+        true
+    }
+
+    /// Notes a held header press moving off its cell; true while a header press is held.
+    pub(super) fn drag_group_header(&mut self, point: (u16, u16)) -> bool {
+        let Some(press) = self.group_header_press.as_mut() else {
+            return false;
+        };
+        press.dragged |= point != press.start;
+        true
+    }
+
+    /// Ends a header press: released on the same header without a drag, it toggles the fold.
+    /// True when a header press was held.
+    pub(super) fn release_group_header(
+        &mut self,
+        point: (u16, u16),
+        outcome: &mut ClientShellInput,
+    ) -> bool {
+        let Some(press) = self.group_header_press.take() else {
+            return false;
+        };
+        let on_header = self
+            .hits
+            .group_headers
+            .iter()
+            .any(|hit| hit.group == press.group && super::contains(hit.rect, point));
+        if on_header && !press.dragged {
+            self.toggle_group_fold(&press.group, outcome);
+        }
+        true
+    }
 }

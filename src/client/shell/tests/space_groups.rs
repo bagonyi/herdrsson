@@ -722,3 +722,623 @@ fn row_gap_skips_duplicate_parent_rows_inside_a_group() {
         ]
     );
 }
+
+fn mouse(
+    state: &mut ClientShellState,
+    kind: MouseEventKind,
+    point: (u16, u16),
+) -> ClientShellInput {
+    state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind,
+        column: point.0,
+        row: point.1,
+        modifiers: KeyModifiers::empty(),
+    })])
+}
+
+/// A left press and release at `point`; the actions both sent.
+fn click(state: &mut ClientShellState, point: (u16, u16)) -> Vec<ClientShellAction> {
+    let mut actions = mouse(state, MouseEventKind::Down(MouseButton::Left), point).actions;
+    actions.extend(mouse(state, MouseEventKind::Up(MouseButton::Left), point).actions);
+    actions
+}
+
+fn click_header(state: &mut ClientShellState, group: &str) -> Vec<ClientShellAction> {
+    let point = header_point(state, group);
+    click(state, point)
+}
+
+/// A cell on `group`'s header in the last frame, right of its chevron.
+fn header_point(state: &ClientShellState, group: &str) -> (u16, u16) {
+    let hit = state
+        .hits
+        .group_headers
+        .iter()
+        .find(|hit| hit.group == group)
+        .expect("group header hit");
+    (hit.rect.x + 4, hit.rect.y)
+}
+
+fn space_point(state: &ClientShellState, workspace_id: &str) -> (u16, u16) {
+    let hit = state
+        .hits
+        .workspaces
+        .iter()
+        .find(|hit| hit.workspace_id == workspace_id)
+        .expect("space hit");
+    (hit.rect.x + 2, hit.rect.y)
+}
+
+fn has_hit(state: &ClientShellState, workspace_id: &str) -> bool {
+    state
+        .hits
+        .workspaces
+        .iter()
+        .any(|hit| hit.workspace_id == workspace_id)
+}
+
+fn navigate(state: &mut ClientShellState) {
+    state.handle_input_bytes(&[0x02]);
+    state.handle_input_bytes(b"w");
+    assert_eq!(state.mode, ClientShellMode::Navigate);
+}
+
+#[test]
+fn clicking_a_group_header_folds_and_unfolds_it() {
+    let mut state = grouped_state(focused_on(
+        named_spaces(&["A/one", "A/two", "plain"]),
+        "ws_3",
+    ));
+    let icon = icon(&state);
+    state.compose(106, 30).expect("composed frame");
+    let header = header_point(&state, "A");
+
+    let press = mouse(&mut state, MouseEventKind::Down(MouseButton::Left), header);
+    assert!(press.actions.is_empty());
+    assert!(
+        state.collapsed_groups.is_empty(),
+        "a press alone doesn't fold"
+    );
+    assert!(state.workspace_press.is_none() && state.chrome_drag.is_none());
+    let release = mouse(&mut state, MouseEventKind::Up(MouseButton::Left), header);
+    assert!(release.actions.is_empty() && release.repaint);
+    assert_eq!(
+        state.collapsed_groups,
+        HashSet::from(["group:A".to_owned()])
+    );
+    assert_eq!(
+        body_lines(&mut state, 3),
+        [
+            format!(" ▸ {icon} A"),
+            format!(" {icon} plain"),
+            String::new()
+        ]
+    );
+    assert!(!has_hit(&state, "ws_1") && !has_hit(&state, "ws_2"));
+
+    assert!(click_header(&mut state, "A").is_empty());
+    assert!(state.collapsed_groups.is_empty());
+    assert_eq!(
+        body_lines(&mut state, 4),
+        [
+            " ▾ A".to_owned(),
+            format!("   {icon} one"),
+            format!("   {icon} two"),
+            format!(" {icon} plain"),
+        ]
+    );
+
+    // Right-click on a header does nothing yet.
+    let header = header_point(&state, "A");
+    let right = mouse(&mut state, MouseEventKind::Down(MouseButton::Right), header);
+    assert!(right.actions.is_empty() && state.overlay.is_none());
+}
+
+#[test]
+fn a_header_press_that_drags_does_not_fold() {
+    let mut state = grouped_state(named_spaces(&["A/one", "A/two", "plain"]));
+    state.compose(106, 30).expect("composed frame");
+    let header = header_point(&state, "A");
+    let plain = space_point(&state, "ws_3");
+
+    // Dragged onto a space and released there: no fold, no space press, no space drag.
+    let mut actions = mouse(&mut state, MouseEventKind::Down(MouseButton::Left), header).actions;
+    actions.extend(mouse(&mut state, MouseEventKind::Drag(MouseButton::Left), plain).actions);
+    assert!(state.chrome_drag.is_none() && state.workspace_press.is_none());
+    actions.extend(mouse(&mut state, MouseEventKind::Up(MouseButton::Left), plain).actions);
+    assert!(
+        actions.is_empty(),
+        "the release doesn't focus the space under it"
+    );
+    assert!(state.collapsed_groups.is_empty());
+
+    // Dragged away and back onto the header.
+    mouse(&mut state, MouseEventKind::Down(MouseButton::Left), header);
+    mouse(
+        &mut state,
+        MouseEventKind::Drag(MouseButton::Left),
+        (header.0, header.1 + 1),
+    );
+    mouse(&mut state, MouseEventKind::Drag(MouseButton::Left), header);
+    mouse(&mut state, MouseEventKind::Up(MouseButton::Left), header);
+    assert!(state.collapsed_groups.is_empty());
+
+    click(&mut state, header);
+    assert!(state.collapsed_groups.contains("group:A"));
+}
+
+#[test]
+fn a_folded_header_shows_its_most_urgent_member_status() {
+    use crate::config::StatusIndicatorStyle;
+
+    let mut projected = named_spaces(&["A/one", "A/two", "A/three", "plain"]);
+    for (index, status) in [
+        (0, AgentStatus::Done),
+        (1, AgentStatus::Blocked),
+        (2, AgentStatus::Idle),
+    ] {
+        projected.workspaces[index].agent_status = status;
+    }
+    let mut state = grouped_state(focused_on(projected, "ws_4"));
+    state.config.status_indicators = StatusIndicatorStyle::Symbols;
+    state.collapsed_groups.insert("group:A".into());
+    let buffer = state
+        .compose(106, 30)
+        .expect("composed frame")
+        .to_ratatui_buffer()
+        .expect("buffer");
+    let palette = state.config.palette.clone();
+    let body = state.hits.workspace_body;
+    let icon = &buffer[(body.x + 3, body.y)];
+    assert_eq!(icon.symbol(), "×");
+    assert_eq!(icon.fg, status_color(AgentStatus::Blocked, &palette));
+    let name = &buffer[(body.x + 5, body.y)];
+    assert_eq!(name.symbol(), "A");
+    assert_eq!(name.fg, palette.text);
+    assert!(name.modifier.contains(Modifier::BOLD));
+    assert_eq!(body_lines(&mut state, 1), [" ▸ × A"]);
+
+    // A blocked worktree child hidden by its block's own fold still counts.
+    let mut projected = named_spaces(&["Web/p", "Web/c", "Web/z", "plain"]);
+    in_worktree(&mut projected, 1, false);
+    in_worktree(&mut projected, 2, true);
+    for (index, status) in [
+        (0, AgentStatus::Idle),
+        (1, AgentStatus::Blocked),
+        (2, AgentStatus::Done),
+    ] {
+        projected.workspaces[index].agent_status = status;
+    }
+    let mut state = grouped_state(focused_on(projected, "ws_4"));
+    state.config.status_indicators = StatusIndicatorStyle::Symbols;
+    state.collapsed_groups.insert("/repo/.git".into());
+    state.collapsed_groups.insert("group:Web".into());
+    assert_eq!(body_lines(&mut state, 1), [" ▸ × Web"]);
+    state.collapsed_groups.remove("/repo/.git");
+    assert_eq!(body_lines(&mut state, 1), [" ▸ × Web"]);
+    state.collapsed_groups.insert("/repo/.git".into());
+    state.collapsed_groups.remove("group:Web");
+    assert_eq!(body_lines(&mut state, 1), [" ▾ Web"], "unfolded: no icon");
+}
+
+#[test]
+fn a_folded_group_still_shows_its_focused_member_and_the_navigate_preview() {
+    let mut state = grouped_state(focused_on(
+        named_spaces(&["A/one", "A/two", "A/three", "plain"]),
+        "ws_2",
+    ));
+    state.collapsed_groups.insert("group:A".into());
+    let icon = icon(&state);
+    assert_eq!(
+        body_lines(&mut state, 4),
+        [
+            format!(" ▸ {icon} A"),
+            format!("   {icon} two"),
+            format!(" {icon} plain"),
+            String::new(),
+        ]
+    );
+
+    navigate(&mut state);
+    state.handle_input_bytes(b"\x1b[B");
+    assert_eq!(
+        body_lines(&mut state, 4),
+        [
+            format!(" ▸ {icon} A"),
+            format!("   {icon} two"),
+            format!("   {icon} three"),
+            format!(" {icon} plain"),
+        ]
+    );
+    state.handle_input_bytes(b"\x1b[B");
+    assert_eq!(
+        body_lines(&mut state, 4),
+        [
+            format!(" ▸ {icon} A"),
+            format!("   {icon} two"),
+            format!(" {icon} plain"),
+            String::new(),
+        ]
+    );
+
+    // A worktree child shows under its block's parent row, as the block's last child.
+    let mut projected = named_spaces(&["Web/p", "Web/c1", "Web/c2", "plain"]);
+    in_worktree(&mut projected, 1, false);
+    in_worktree(&mut projected, 2, true);
+    in_worktree(&mut projected, 3, true);
+    let mut state = grouped_state(focused_on(projected, "ws_2"));
+    state.collapsed_groups.insert("group:Web".into());
+    let lines = body_lines(&mut state, 5);
+    assert!(lines[1].ends_with('▾'), "{lines:?}");
+    assert_eq!(
+        lines
+            .iter()
+            .map(|line| without_toggle(line))
+            .collect::<Vec<_>>(),
+        [
+            format!(" ▸ {icon} Web"),
+            format!("   {icon} p"),
+            format!("     └─ {icon} c1"),
+            format!(" {icon} plain"),
+            String::new(),
+        ]
+    );
+}
+
+#[test]
+fn navigation_visits_the_members_of_a_folded_group() {
+    use crate::input::KeybindAction;
+
+    let mut state = grouped_state(focused_on(
+        named_spaces(&["A/one", "plain", "A/two"]),
+        "ws_2",
+    ));
+    state.collapsed_groups.insert("group:A".into());
+    let icon = icon(&state);
+    state.compose(106, 30).expect("composed frame");
+
+    assert_eq!(
+        focus_request(&mut state, KeybindAction::NextWorkspace),
+        "ws_1"
+    );
+    set_focus(&mut state, "ws_1");
+    assert_eq!(
+        body_lines(&mut state, 3),
+        [
+            format!(" ▸ {icon} A"),
+            format!("   {icon} one"),
+            format!(" {icon} plain"),
+        ]
+    );
+    assert_eq!(
+        focus_request(&mut state, KeybindAction::NextWorkspace),
+        "ws_3"
+    );
+    set_focus(&mut state, "ws_3");
+    assert_eq!(
+        body_lines(&mut state, 3),
+        [
+            format!(" ▸ {icon} A"),
+            format!("   {icon} two"),
+            format!(" {icon} plain"),
+        ]
+    );
+    assert_eq!(
+        focus_request(&mut state, KeybindAction::PreviousWorkspace),
+        "ws_1"
+    );
+    for (index, workspace_id) in ["ws_1", "ws_3", "ws_2"].into_iter().enumerate() {
+        assert_eq!(
+            focus_request(&mut state, KeybindAction::SwitchWorkspace(index)),
+            workspace_id
+        );
+    }
+
+    set_focus(&mut state, "ws_2");
+    state.compose(106, 30).expect("composed frame");
+    navigate(&mut state);
+    for (workspace_id, short) in [("ws_1", "one"), ("ws_3", "two")] {
+        state.handle_input_bytes(b"\x1b[B");
+        assert_eq!(
+            state.navigate_workspace_id,
+            state.navigation_target(&ClientEndpointId::Local, workspace_id)
+        );
+        assert_eq!(
+            body_lines(&mut state, 3),
+            [
+                format!(" ▸ {icon} A"),
+                format!("   {icon} {short}"),
+                format!(" {icon} plain"),
+            ]
+        );
+    }
+}
+
+/// Plain spaces `p1`.., the folded group `A` (`a1`..), then plain spaces `q1`..; focused on
+/// `focus`, composed once at 106x20 (a 7-row sidebar body).
+fn around_folded_group(
+    before: usize,
+    members: usize,
+    after: usize,
+    focus: &str,
+) -> ClientShellState {
+    let labels = (1..=before)
+        .map(|number| format!("p{number}"))
+        .chain((1..=members).map(|number| format!("A/a{number}")))
+        .chain((1..=after).map(|number| format!("q{number}")))
+        .collect::<Vec<_>>();
+    let projected = named_spaces(&labels.iter().map(String::as_str).collect::<Vec<_>>());
+    let mut state = grouped_state(focused_on(projected, focus));
+    state.collapsed_groups.insert("group:A".into());
+    state.compose(106, 20).expect("composed frame");
+    assert_eq!(state.hits.workspace_body.height, 7);
+    state
+}
+
+/// Whether `group`'s header is drawn on the row right above `workspace_id`'s row.
+fn header_right_above(state: &ClientShellState, group: &str, workspace_id: &str) -> bool {
+    let Some(space) = state
+        .hits
+        .workspaces
+        .iter()
+        .find(|hit| hit.workspace_id == workspace_id)
+    else {
+        return false;
+    };
+    state
+        .hits
+        .group_headers
+        .iter()
+        .any(|hit| hit.group == group && hit.rect.y + 1 == space.rect.y)
+}
+
+fn preview_is(state: &ClientShellState, workspace_id: &str) -> bool {
+    state.navigate_workspace_id == state.navigation_target(&ClientEndpointId::Local, workspace_id)
+}
+
+#[test]
+fn revealing_a_space_counts_the_rows_of_a_folded_group_above_it() {
+    // `p1`..`p10` (`ws_1`..), `a1`..`a10` (`ws_11`..) folded, `q1`..`q20` (`ws_21`..).
+    let mut state = around_folded_group(10, 10, 20, "ws_1");
+
+    // Navigate mode: every preview is in view, the header with the group's first drawn member.
+    navigate(&mut state);
+    for number in 2..=40 {
+        let workspace_id = format!("ws_{number}");
+        state.handle_input_bytes(b"\x1b[B");
+        assert!(preview_is(&state, &workspace_id));
+        state.compose(106, 20).expect("composed frame");
+        assert!(has_hit(&state, &workspace_id), "{workspace_id} hidden");
+        if (11..=20).contains(&number) {
+            assert!(
+                header_right_above(&state, "A", &workspace_id),
+                "{workspace_id}"
+            );
+        }
+    }
+
+    // Switching by key scrolls before the server answers.
+    let mut state = around_folded_group(10, 10, 20, "ws_1");
+    assert_eq!(
+        focus_request(&mut state, crate::input::KeybindAction::SwitchWorkspace(29)),
+        "ws_30"
+    );
+    state.compose(106, 20).expect("composed frame");
+    assert!(has_hit(&state, "ws_30"));
+}
+
+#[test]
+fn a_preview_in_a_folded_group_at_the_end_of_the_list_is_drawn() {
+    // Six spaces and the header fill the body exactly; ↑ wraps to the group's last member.
+    let mut state = around_folded_group(6, 2, 0, "ws_1");
+    navigate(&mut state);
+    state.handle_input_bytes(b"\x1b[A");
+    assert!(preview_is(&state, "ws_8"));
+    state.compose(106, 20).expect("composed frame");
+    assert!(header_right_above(&state, "A", "ws_8"));
+
+    // ↓ from the row above the group into it, then through its members.
+    let mut state = around_folded_group(30, 3, 0, "ws_1");
+    navigate(&mut state);
+    for number in 2..=33 {
+        let workspace_id = format!("ws_{number}");
+        state.handle_input_bytes(b"\x1b[B");
+        assert!(preview_is(&state, &workspace_id));
+        state.compose(106, 20).expect("composed frame");
+        assert!(has_hit(&state, &workspace_id), "{workspace_id} hidden");
+    }
+    assert!(header_right_above(&state, "A", "ws_33"));
+
+    // The focused member is drawn last; ↓ previews the next member below it.
+    let mut state = around_folded_group(30, 3, 0, "ws_31");
+    navigate(&mut state);
+    state.handle_input_bytes(b"\x1b[B");
+    assert!(preview_is(&state, "ws_32"));
+    state.compose(106, 20).expect("composed frame");
+    assert!(header_right_above(&state, "A", "ws_31"));
+    assert!(has_hit(&state, "ws_32"));
+}
+
+#[test]
+fn moving_to_a_hidden_member_that_fits_in_view_does_not_scroll() {
+    use crate::input::KeybindAction;
+
+    // `p1`..`p20`, `a1`..`a3` (`ws_21`..`ws_23`) folded, `q1`..`q20`; `a1` is focused.
+    let scrolled_to = |scroll: usize| {
+        let mut state = around_folded_group(20, 3, 20, "ws_21");
+        state.workspace_scroll = scroll;
+        state.compose(106, 20).expect("composed frame");
+        state
+    };
+    let mut state = scrolled_to(19);
+    let icon = icon(&state);
+    let rows = |names: &[&str]| {
+        names
+            .iter()
+            .map(|name| match *name {
+                "A" => format!(" ▸ {icon} A"),
+                member if member.starts_with('a') => format!("   {icon} {member}"),
+                plain => format!(" {icon} {plain}"),
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        body_lines_at(&mut state, 20, 7),
+        rows(&["p20", "A", "a1", "q1", "q2", "q3", "q4"])
+    );
+
+    // Navigate ↓ to `a2`: drawn under `a1` in place.
+    navigate(&mut state);
+    state.handle_input_bytes(b"\x1b[B");
+    assert!(preview_is(&state, "ws_22"));
+    assert_eq!(
+        body_lines_at(&mut state, 20, 7),
+        rows(&["p20", "A", "a1", "a2", "q1", "q2", "q3"])
+    );
+    assert_eq!(state.workspace_scroll, 19);
+
+    // Next space to `a2`: nothing scrolls before or after the server answers.
+    let mut state = scrolled_to(19);
+    assert_eq!(
+        focus_request(&mut state, KeybindAction::NextWorkspace),
+        "ws_22"
+    );
+    assert_eq!(
+        body_lines_at(&mut state, 20, 7),
+        rows(&["p20", "A", "a1", "q1", "q2", "q3", "q4"])
+    );
+    set_focus(&mut state, "ws_22");
+    assert_eq!(
+        body_lines_at(&mut state, 20, 7),
+        rows(&["p20", "A", "a2", "q1", "q2", "q3", "q4"])
+    );
+
+    // Out of view: the least scroll that shows it, under `a1`.
+    let mut state = scrolled_to(0);
+    assert_eq!(
+        focus_request(&mut state, KeybindAction::NextWorkspace),
+        "ws_22"
+    );
+    assert_eq!(state.workspace_scroll, 16);
+    set_focus(&mut state, "ws_22");
+    assert_eq!(
+        body_lines_at(&mut state, 20, 7),
+        rows(&["p17", "p18", "p19", "p20", "A", "a2", "q1"])
+    );
+}
+
+#[test]
+fn group_headers_get_no_hits_without_mouse_capture() {
+    let mut state = grouped_state(named_spaces(&["A/one", "plain"]));
+    state.config.mouse_capture = false;
+    state.compose(106, 30).expect("composed frame");
+    assert!(state.hits.group_headers.is_empty());
+    let body = state.hits.workspace_body;
+    click(&mut state, (body.x + 4, body.y));
+    assert!(state.collapsed_groups.is_empty());
+    assert_eq!(body_lines(&mut state, 1), [" ▾ A"]);
+}
+
+#[test]
+fn group_folds_are_saved_with_the_window_preferences() {
+    let path = std::env::temp_dir().join(format!(
+        "herdr-space-group-folds-{}-{}.json",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos()
+    ));
+    std::fs::write(&path, r#"{"collapsed_groups":["/repo","group:A"]}"#)
+        .expect("write preferences");
+    let open = |path: &std::path::Path| {
+        let config =
+            ClientShellConfig::from_config(&Config::default()).with_preferences_path(path.into());
+        let mut state = ClientShellState::new(config);
+        state.set_snapshot(Box::new(focused_on(
+            named_spaces(&["A/one", "plain"]),
+            "ws_2",
+        )));
+        state.set_pane_surface(surface());
+        state
+    };
+
+    let mut state = open(&path);
+    let icon = icon(&state);
+    assert_eq!(body_lines(&mut state, 1), [format!(" ▸ {icon} A")]);
+    click_header(&mut state, "A");
+    let stored = std::fs::read_to_string(&path).expect("stored preferences");
+    assert!(
+        stored.contains("/repo") && !stored.contains("group:A"),
+        "{stored}"
+    );
+    click_header(&mut state, "A");
+    let stored = std::fs::read_to_string(&path).expect("stored preferences");
+    assert!(stored.contains("\"group:A\""), "{stored}");
+
+    let mut reopened = open(&path);
+    assert_eq!(body_lines(&mut reopened, 1), [format!(" ▸ {icon} A")]);
+    std::fs::remove_file(path).expect("remove preferences");
+}
+
+#[test]
+fn worktree_folds_inside_a_group_stay_independent_of_the_group_fold() {
+    let mut projected = named_spaces(&["Web/p", "Web/c1", "Web/c2", "plain"]);
+    in_worktree(&mut projected, 1, false);
+    in_worktree(&mut projected, 2, true);
+    in_worktree(&mut projected, 3, true);
+    let mut state = grouped_state(focused_on(projected, "ws_4"));
+    let icon = icon(&state);
+    state.compose(106, 30).expect("composed frame");
+    let toggle = |state: &ClientShellState| {
+        let hit = state
+            .hits
+            .workspaces
+            .iter()
+            .find(|hit| hit.workspace_id == "ws_1")
+            .expect("parent row");
+        let (rect, _) = hit.group_toggle.as_ref().expect("worktree toggle");
+        (rect.x, rect.y)
+    };
+
+    let point = toggle(&state);
+    click(&mut state, point);
+    assert_eq!(
+        state.collapsed_groups,
+        HashSet::from(["/repo/.git".to_owned()])
+    );
+    let lines = body_lines(&mut state, 3);
+    assert!(lines[1].ends_with('▸'), "{lines:?}");
+    assert_eq!(lines[2], format!(" {icon} plain"));
+
+    click_header(&mut state, "Web");
+    assert_eq!(
+        body_lines(&mut state, 2),
+        [format!(" ▸ {icon} Web"), format!(" {icon} plain")]
+    );
+    click_header(&mut state, "Web");
+    assert_eq!(
+        state.collapsed_groups,
+        HashSet::from(["/repo/.git".to_owned()])
+    );
+    let lines = body_lines(&mut state, 3);
+    assert!(lines[1].ends_with('▸'), "{lines:?}");
+    assert_eq!(without_toggle(&lines[1]), format!("   {icon} p"));
+
+    let point = toggle(&state);
+    click(&mut state, point);
+    assert!(state.collapsed_groups.is_empty());
+    assert_eq!(
+        body_lines(&mut state, 5)
+            .iter()
+            .map(|line| without_toggle(line))
+            .collect::<Vec<_>>(),
+        [
+            " ▾ Web".to_owned(),
+            format!("   {icon} p"),
+            format!("     ├─ {icon} c1"),
+            format!("     └─ {icon} c2"),
+            format!(" {icon} plain"),
+        ]
+    );
+}
