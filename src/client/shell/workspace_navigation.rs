@@ -109,16 +109,7 @@ impl ClientShellState {
                 continue;
             };
             let entries = if self.sidebar_collapsed && !mobile && surface_available {
-                snapshot
-                    .workspaces
-                    .iter()
-                    .enumerate()
-                    .map(|(index, _)| WorkspaceEntry {
-                        index,
-                        indented: false,
-                        last_child: false,
-                    })
-                    .collect()
+                super::space_groups::rail_entries(snapshot, self.endpoints.len() == 1)
             } else {
                 let collapsed_groups = if mobile && surface_available {
                     &empty_collapsed_groups
