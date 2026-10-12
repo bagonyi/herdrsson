@@ -217,6 +217,8 @@ pub(super) enum ClientChromeDrag {
         source_workspace_id: String,
         target: Option<(Option<String>, u16)>,
     },
+    /// A space or a group header dragged in a sidebar that draws groups (`space_groups`).
+    SpaceGroups(super::space_groups::GroupDrag),
     PaneSplit {
         hit: PaneSplitHit,
         tab_id: String,
