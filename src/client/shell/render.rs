@@ -248,8 +248,6 @@ pub(super) struct ShellRenderState<'a> {
     pub(super) reveal_navigation_workspace: &'a mut bool,
     pub(super) dragged_workspace_id: Option<&'a str>,
     pub(super) workspace_drop_indicator_row: Option<u16>,
-    /// A drag in a sidebar that draws space groups (`space_groups`).
-    pub(super) space_group_drag: Option<&'a super::space_groups::GroupDrag>,
 }
 
 pub(super) fn render_shell(

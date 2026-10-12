@@ -77,7 +77,6 @@ impl ClientShellState {
             reveal_navigation_workspace: &mut self.reveal_navigation_workspace,
             dragged_workspace_id: None,
             workspace_drop_indicator_row: None,
-            space_group_drag: None,
         };
         if let Some(snapshot) = local_snapshot {
             render::render_sidebar(
@@ -235,9 +234,9 @@ impl ClientShellState {
                 reveal_navigation_workspace: &mut self.reveal_navigation_workspace,
                 dragged_workspace_id,
                 workspace_drop_indicator_row,
-                space_group_drag: super::space_groups::group_drag(self.chrome_drag.as_ref()),
             },
         );
+        self.draw_group_drag(&mut buffer);
         self.hits.panes = surface
             .panes
             .iter()

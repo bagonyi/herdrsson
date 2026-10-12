@@ -322,10 +322,8 @@ pub(super) enum ClientRenameTarget {
     SpaceGroup {
         name: String,
     },
-    /// A space's name from "Move to group" → "New group..." (`space_groups`).
-    SpaceNewGroup {
-        workspace_id: String,
-    },
+    /// A space's name asked by "New group..." or a drag out of a group (`space_groups`).
+    SpaceName(super::space_groups::SpaceName),
 }
 
 #[derive(Debug)]
@@ -1236,12 +1234,13 @@ impl ClientShellState {
         {
             return;
         }
-        if self.reveal_folded_member(workspace_id) {
+        if self.reveal_in_groups(workspace_id) {
             return;
         }
         let target = self.snapshot.as_deref().and_then(|snapshot| {
-            let entries = self.navigation_workspace_entries(snapshot);
-            super::space_groups::reveal_row(snapshot, entries, &self.collapsed_groups, workspace_id)
+            self.navigation_workspace_entries(snapshot)
+                .iter()
+                .position(|entry| snapshot.workspaces[entry.index].workspace_id == workspace_id)
         });
         if let Some(target) = target {
             self.workspace_scroll = target.min(self.hits.workspace_max_scroll);
@@ -1729,6 +1728,7 @@ impl ClientShellState {
             self.chrome_drag = None;
             self.workspace_press = None;
             self.tab_press = None;
+            self.group_header_press = None;
             if self.pane_mouse_gesture.as_ref().is_some_and(|gesture| {
                 gesture.hit.popup && previous_popup.as_deref() == Some(gesture.hit.pane_id.as_str())
             }) {

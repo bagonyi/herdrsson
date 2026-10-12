@@ -379,13 +379,6 @@ pub(crate) fn render_sidebar(
             Style::default().fg(palette.accent),
         );
     }
-    space_groups::render_group_drag(
-        buffer,
-        body,
-        &hits.group_headers,
-        state.space_group_drag,
-        palette,
-    );
 
     let footer_y = workspace_area.bottom().saturating_sub(1);
     if config.mouse_capture {
