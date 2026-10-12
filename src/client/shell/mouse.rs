@@ -1215,9 +1215,13 @@ impl ClientShellState {
                     outcome.repaint = true;
                     return;
                 }
+                Some(ClientChromeDrag::SpaceGroups(_)) => {
+                    self.drag_in_groups(point, outcome);
+                    return;
+                }
                 None => {}
             }
-            if self.drag_group_header(point) {
+            if self.drag_group_header(point, outcome) {
                 return;
             }
             if let Some(press) = self.workspace_press.as_ref() {
@@ -1228,7 +1232,9 @@ impl ClientShellState {
                 if delta >= 1 {
                     let source_workspace_id = press.workspace_id.clone();
                     let draggable = self.endpoint_workspace_is_draggable(press);
-                    if draggable {
+                    if draggable
+                        && !self.start_space_drag_in_groups(&source_workspace_id, point, outcome)
+                    {
                         if let Some(target) = self.workspace_drop_target_at(point) {
                             self.chrome_drag = Some(ClientChromeDrag::Workspace {
                                 source_workspace_id,
@@ -1310,6 +1316,7 @@ impl ClientShellState {
                         }
                         outcome.repaint = true;
                     }
+                    ClientChromeDrag::SpaceGroups(drag) => self.drop_group_drag(drag, outcome),
                     ClientChromeDrag::PaneScrollbar {
                         hit,
                         grab_row_offset,

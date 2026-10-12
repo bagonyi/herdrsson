@@ -3,7 +3,11 @@
 //! full name and its own order. A click on a header folds the group (` ▸ ✓ Web`); a right-click
 //! opens its menu, which folds it too or renames the group (every member's name). A space's own
 //! menu moves it to a group by its name, and the window then moves it in the server's order too,
-//! so that order matches the drawing.
+//! so that order matches the drawing. Dragging does the same (`drag`).
+
+pub(super) mod drag;
+
+pub(super) use drag::{group_drag, render_group_drag, GroupDrag};
 
 use super::render::put_segment;
 use super::*;
@@ -635,7 +639,8 @@ fn short_name(workspace: &ClientShellWorkspace) -> &str {
 }
 
 /// What choosing group `group` in `workspace_id`'s "Move to group" menu sends: the rename to
-/// `<group>/<short name>`, then the move that puts the space after the group's last space.
+/// `<group>/<short name>`, then the moves that put the space after the group's last space
+/// (`group_moves`).
 pub(super) fn join_group_methods(
     snapshot: &ClientShellSnapshot,
     workspace_id: &str,
@@ -652,7 +657,9 @@ pub(super) fn join_group_methods(
         workspace_id: workspace_id.to_owned(),
         label: format!("{group}/{}", short_name(workspace)),
     })];
-    methods.extend(join_group_move(snapshot, workspace_id, group));
+    methods.extend(
+        group_moves(snapshot, workspace_id, Some(group), Place::AfterLast).unwrap_or_default(),
+    );
     methods
 }
 
@@ -667,74 +674,199 @@ pub(super) fn new_group_rename(workspace_id: String, label: &str) -> Option<Meth
     })
 }
 
-/// The move that goes with the rename box naming `workspace_id` `label` (trimmed): into another
-/// group that already has spaces, it moves after that group's last space as "Move to group" does.
-/// A new group, leaving a group or staying in one keeps the server position.
-pub(super) fn rename_move(
+/// The moves that go with the rename box naming `workspace_id` `label` (trimmed): into another
+/// group that already has spaces, after that group's last space as "Move to group" does. A new
+/// group or leaving a group keeps the server position; staying in its group moves nothing.
+pub(super) fn rename_moves(
     snapshot: &ClientShellSnapshot,
     workspace_id: &str,
     label: &str,
-) -> Option<Method> {
-    let (group, _) = split_label(label)?;
+) -> Vec<Method> {
+    let group = split_label(label).map(|(group, _)| group);
     let entries = super::render::workspace_entries(snapshot, &HashSet::new());
     let groups = block_groups(snapshot, &entries);
-    if drawn_group(snapshot, &entries, &groups, workspace_id) == Some(group) {
-        return None;
+    if drawn_group(snapshot, &entries, &groups, workspace_id) == group {
+        return Vec::new();
     }
-    join_group_move(snapshot, workspace_id, group)
+    let place = if group.is_some() {
+        Place::AfterLast
+    } else {
+        Place::Stay
+    };
+    group_moves(snapshot, workspace_id, group, place).unwrap_or_default()
 }
 
-/// The move that puts `workspace_id`, with its block, right after the last space drawn in `group`
-/// (its members and their worktree blocks) in server order, so the server order matches the
-/// drawing. None when nothing else is drawn in the group, when the space moves only with its
-/// block's head, and when its block is there already.
-fn join_group_move(
+/// Where `group_moves` puts a space's block in the server's order.
+#[derive(Clone, Copy)]
+enum Place<'a> {
+    /// Where it is.
+    Stay,
+    /// Right after the last space of the group it joins (where it is, if that group has none).
+    AfterLast,
+    /// Right before this space, or at the end.
+    Before(Option<&'a str>),
+}
+
+/// The server-order moves that go with `workspace_id` going into group `to` (None: the top level)
+/// at `place`, so the server order keeps matching the drawing. A group is drawn at its first space
+/// in server order, so first:
+/// - the group the space is drawn in is gathered behind its first space when the moving block
+///   holds that space and other spaces sit between the group's (else the group would jump to its
+///   next space's place);
+/// - the group it joins is gathered too, so its last space is the one drawn last.
+///
+/// Then the block moves. None when the space only moves with its block's head, or `place`'s space
+/// is gone.
+fn group_moves(
     snapshot: &ClientShellSnapshot,
     workspace_id: &str,
-    group: &str,
-) -> Option<Method> {
+    to: Option<&str>,
+    place: Place<'_>,
+) -> Option<Vec<Method>> {
     let entries = super::render::workspace_entries(snapshot, &HashSet::new());
     let block = moving_block(snapshot, &entries, workspace_id)?;
-    let server_order = || {
-        snapshot
-            .workspaces
-            .iter()
-            .map(|workspace| workspace.workspace_id.as_str())
-    };
-    let last = entries
-        .iter()
-        .zip(block_groups(snapshot, &entries))
-        .filter(|(_, drawn_in)| *drawn_in == Some(group))
-        .filter(|(entry, _)| {
-            snapshot
-                .workspaces
-                .get(entry.index)
-                .is_some_and(|workspace| !block.contains(&workspace.workspace_id.as_str()))
-        })
-        .map(|(entry, _)| entry.index)
-        .max()?;
-    let before = server_order()
-        .skip(last + 1)
-        .find(|workspace_id| !block.contains(workspace_id));
-    // The order the server makes of the move; nothing to send when it is the current one.
-    let mut moved = server_order()
-        .filter(|workspace_id| !block.contains(workspace_id))
-        .collect::<Vec<_>>();
-    let at = before
-        .and_then(|before| {
-            moved
-                .iter()
-                .position(|workspace_id| *workspace_id == before)
-        })
-        .unwrap_or(moved.len());
-    moved.splice(at..at, block.iter().copied());
-    if moved.into_iter().eq(server_order()) {
-        return None;
+    let from = drawn_group(
+        snapshot,
+        &entries,
+        &block_groups(snapshot, &entries),
+        workspace_id,
+    );
+    let mut plan = OrderPlan::new(snapshot);
+    if let Some(from) = from {
+        let spaces = group_spaces(snapshot, &entries, from);
+        if spaces.first().is_some_and(|first| block.contains(first)) {
+            plan.gather(&spaces, &block);
+        }
     }
-    Some(Method::WorkspaceMoveBlock(WorkspaceMoveBlockParams {
-        workspace_ids: block.into_iter().map(str::to_owned).collect(),
-        before_workspace_id: before.map(str::to_owned),
-    }))
+    let joined = to
+        .filter(|to| Some(*to) != from)
+        .map(|to| group_spaces(snapshot, &entries, to))
+        .unwrap_or_default();
+    plan.gather(&joined, &block);
+    match place {
+        Place::Stay => {}
+        Place::AfterLast => {
+            if let Some(last) = plan
+                .order
+                .iter()
+                .rposition(|id| joined.contains(id) && !block.contains(id))
+            {
+                let before = plan.order.get(last + 1).copied();
+                plan.move_block(&block, before);
+            }
+        }
+        Place::Before(before) => {
+            if !plan.move_block(&block, before) {
+                return None;
+            }
+        }
+    }
+    Some(plan.methods)
+}
+
+/// Every space drawn in `group` (its members and their worktree blocks), in server order.
+fn group_spaces<'a>(
+    snapshot: &'a ClientShellSnapshot,
+    entries: &[WorkspaceEntry],
+    group: &str,
+) -> Vec<&'a str> {
+    let mut indices = entries
+        .iter()
+        .zip(block_groups(snapshot, entries))
+        .filter(|(_, drawn_in)| *drawn_in == Some(group))
+        .map(|(entry, _)| entry.index)
+        .collect::<Vec<_>>();
+    indices.sort_unstable();
+    indices
+        .into_iter()
+        .filter_map(|index| snapshot.workspaces.get(index))
+        .map(|workspace| workspace.workspace_id.as_str())
+        .collect()
+}
+
+/// `workspace.move_block` requests planned on a copy of the server's order, each applied to it as
+/// the server will, so each request is computed against the order the one before leaves.
+struct OrderPlan<'a> {
+    order: Vec<&'a str>,
+    methods: Vec<Method>,
+}
+
+impl<'a> OrderPlan<'a> {
+    fn new(snapshot: &'a ClientShellSnapshot) -> Self {
+        Self {
+            order: snapshot
+                .workspaces
+                .iter()
+                .map(|workspace| workspace.workspace_id.as_str())
+                .collect(),
+            methods: Vec::new(),
+        }
+    }
+
+    /// Moves `block` (in this order) right before `before`, or to the end. A `before` in the block
+    /// gives way to the first space after it that isn't (the server refuses a `before` in the
+    /// block). Nothing is requested when the order stays the same. False when `before` is gone.
+    fn move_block(&mut self, block: &[&'a str], before: Option<&str>) -> bool {
+        let before = match before {
+            Some(before) => {
+                let Some(at) = self.order.iter().position(|id| *id == before) else {
+                    return false;
+                };
+                self.order[at..]
+                    .iter()
+                    .copied()
+                    .find(|id| !block.contains(id))
+            }
+            None => None,
+        };
+        let mut moved = self
+            .order
+            .iter()
+            .copied()
+            .filter(|id| !block.contains(id))
+            .collect::<Vec<_>>();
+        let at = before
+            .and_then(|before| moved.iter().position(|id| *id == before))
+            .unwrap_or(moved.len());
+        moved.splice(at..at, block.iter().copied());
+        if moved != self.order {
+            self.methods
+                .push(Method::WorkspaceMoveBlock(WorkspaceMoveBlockParams {
+                    workspace_ids: block.iter().map(|id| (*id).to_owned()).collect(),
+                    before_workspace_id: before.map(str::to_owned),
+                }));
+            self.order = moved;
+        }
+        true
+    }
+
+    /// Gathers group `spaces` right behind its first space when other spaces sit between them
+    /// (`block`, about to move, doesn't count): they go before the first space after the group's
+    /// first that is neither the group's nor the block's, so the group stays where it is drawn.
+    fn gather(&mut self, spaces: &[&'a str], block: &[&'a str]) {
+        let in_group = |id: &&str| spaces.contains(id) && !block.contains(id);
+        let (Some(first), Some(last)) = (
+            self.order.iter().position(|id| spaces.contains(id)),
+            self.order.iter().rposition(in_group),
+        ) else {
+            return;
+        };
+        let Some(before) = self.order[first..last]
+            .iter()
+            .copied()
+            .find(|id| !spaces.contains(id) && !block.contains(id))
+        else {
+            return;
+        };
+        let anchor = self.order[first];
+        let rest = self
+            .order
+            .iter()
+            .copied()
+            .filter(|id| *id != anchor && in_group(id))
+            .collect::<Vec<_>>();
+        self.move_block(&rest, Some(before));
+    }
 }
 
 /// The spaces that move with `workspace_id` when it changes group, the space first: a worktree
@@ -888,12 +1020,21 @@ impl ClientShellState {
         true
     }
 
-    /// Notes a held header press moving off its cell; true while a header press is held.
-    pub(super) fn drag_group_header(&mut self, point: (u16, u16)) -> bool {
+    /// Notes a held header press moving off its cell, which starts dragging its group; true while
+    /// a header press is held.
+    pub(super) fn drag_group_header(
+        &mut self,
+        point: (u16, u16),
+        outcome: &mut ClientShellInput,
+    ) -> bool {
         let Some(press) = self.group_header_press.as_mut() else {
             return false;
         };
-        press.dragged |= point != press.start;
+        if !press.dragged && point != press.start {
+            press.dragged = true;
+            let group = press.group.clone();
+            self.start_header_drag(group, point, outcome);
+        }
         true
     }
 
@@ -1058,16 +1199,7 @@ impl ClientShellState {
                     .as_deref()
                     .map(|snapshot| join_group_methods(snapshot, &workspace_id, group))
                     .unwrap_or_default();
-                for method in methods {
-                    // The move goes only after its rename, which a refusal would refuse too.
-                    if !self.push_endpoint_method_with_kind(
-                        method,
-                        PendingEndpointKind::Generic,
-                        outcome,
-                    ) {
-                        break;
-                    }
-                }
+                self.push_in_order(methods, outcome);
             }
             ClientContextMenuAction::LeaveGroup => {
                 let Some((_, short)) = split_name(workspace) else {
@@ -1075,22 +1207,24 @@ impl ClientShellState {
                 };
                 // `app/x` would land in group `app`: the user picks the name instead.
                 if short.contains('/') {
-                    let input = TextEditor::new(short, false);
-                    self.overlay = Some(ClientShellOverlay::Rename(ClientRenameOverlay {
-                        title: "rename workspace",
-                        input,
-                        target: ClientRenameTarget::Workspace { workspace_id },
-                    }));
+                    let short = short.to_owned();
+                    self.ask_space_name(workspace_id, &short);
                     return;
                 }
-                let label = short.to_owned();
-                self.push_endpoint_method(
-                    Method::WorkspaceRename(WorkspaceRenameParams {
-                        workspace_id,
-                        label,
-                    }),
-                    outcome,
+                let mut methods = vec![Method::WorkspaceRename(WorkspaceRenameParams {
+                    workspace_id: workspace_id.clone(),
+                    label: short.to_owned(),
+                })];
+                // It stays where it is; its old group may need gathering behind it.
+                methods.extend(
+                    self.snapshot
+                        .as_deref()
+                        .and_then(|snapshot| {
+                            group_moves(snapshot, &workspace_id, None, Place::Stay)
+                        })
+                        .unwrap_or_default(),
                 );
+                self.push_in_order(methods, outcome);
             }
             ClientContextMenuAction::NewGroup => {
                 // The group name goes before the slash: the cursor starts there.
@@ -1109,33 +1243,52 @@ impl ClientShellState {
         }
     }
 
-    /// The move that goes with saving the rename box of a space (`rename_move`).
+    /// The moves that go with saving the rename box of a space (`rename_moves`).
     pub(super) fn rename_group_move(
         &self,
         target: &ClientRenameTarget,
         label: &str,
-    ) -> Option<Method> {
+    ) -> Vec<Method> {
         let (ClientRenameTarget::Workspace { workspace_id }
         | ClientRenameTarget::SpaceNewGroup { workspace_id }) = target
         else {
-            return None;
+            return Vec::new();
         };
-        rename_move(self.snapshot.as_deref()?, workspace_id, label)
+        self.snapshot
+            .as_deref()
+            .map(|snapshot| rename_moves(snapshot, workspace_id, label))
+            .unwrap_or_default()
     }
 
-    /// Sends what a rename box saves, then its group move (`rename_group_move`) if that was
+    /// Sends what a rename box saves, then its group moves (`rename_group_move`) if that was
     /// queued: a refused rename moves nothing.
     pub(super) fn push_rename(
         &mut self,
         method: Method,
-        group_move: Option<Method>,
+        group_moves: Vec<Method>,
         outcome: &mut ClientShellInput,
     ) {
-        let queued =
-            self.push_endpoint_method_with_kind(method, PendingEndpointKind::Generic, outcome);
-        if let Some(group_move) = group_move.filter(|_| queued) {
-            self.push_endpoint_method(group_move, outcome);
+        if self.push_endpoint_method_with_kind(method, PendingEndpointKind::Generic, outcome) {
+            self.push_in_order(group_moves, outcome);
         }
+    }
+
+    /// Sends `methods` in order and stops at the first one refused (a refusal would refuse the
+    /// rest too, and a move must not go without its rename); false when one was refused.
+    fn push_in_order(&mut self, methods: Vec<Method>, outcome: &mut ClientShellInput) -> bool {
+        methods.into_iter().all(|method| {
+            self.push_endpoint_method_with_kind(method, PendingEndpointKind::Generic, outcome)
+        })
+    }
+
+    /// Opens the space's own rename box prefilled with `name`, the cursor at its end, for a short
+    /// name the window can't use as it is (`app/x` would land in group `app`).
+    fn ask_space_name(&mut self, workspace_id: String, name: &str) {
+        self.overlay = Some(ClientShellOverlay::Rename(ClientRenameOverlay {
+            title: "rename workspace",
+            input: TextEditor::new(name, false),
+            target: ClientRenameTarget::Workspace { workspace_id },
+        }));
     }
 
     /// Whether the one-machine sidebar draws a header for `group`.

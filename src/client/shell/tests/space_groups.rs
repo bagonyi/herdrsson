@@ -1,4 +1,5 @@
 use super::*;
+use crate::client::shell::space_groups::drag::{GroupDragSource, GroupDropTarget};
 use crate::client::shell::space_groups::split_name;
 
 fn space(number: usize, label: &str, custom_label: bool) -> ClientShellWorkspace {
@@ -836,10 +837,15 @@ fn a_header_press_that_drags_does_not_fold() {
     let header = header_point(&state, "A");
     let plain = space_point(&state, "ws_3");
 
-    // Dragged onto a space and released there: no fold, no space press, no space drag.
+    // Dragged onto a space and released there: no fold, no space press, no space drag (the
+    // group's drag drops right after the group, which changes nothing).
     let mut actions = mouse(&mut state, MouseEventKind::Down(MouseButton::Left), header).actions;
     actions.extend(mouse(&mut state, MouseEventKind::Drag(MouseButton::Left), plain).actions);
-    assert!(state.chrome_drag.is_none() && state.workspace_press.is_none());
+    assert!(matches!(
+        state.chrome_drag.as_ref(),
+        Some(ClientChromeDrag::SpaceGroups(drag)) if drag.source == GroupDragSource::Header("A".into())
+    ));
+    assert!(state.workspace_press.is_none());
     actions.extend(mouse(&mut state, MouseEventKind::Up(MouseButton::Left), plain).actions);
     assert!(
         actions.is_empty(),
@@ -2249,18 +2255,31 @@ fn picking_a_group_renames_the_space_and_moves_it_after_the_groups_last_member()
     projected.workspaces[4].custom_label = false;
     let mut state = grouped_state(projected);
 
-    // A in the middle of the server order: before the space after its last member.
+    // A in the middle of the server order, its spaces not adjacent: first `three` is gathered
+    // behind `one`, then the space goes after it.
     assert_eq!(
         move_to(&mut state, "ws_2", "A"),
-        ["rename ws_2 A/plain", "move ws_2 before ws_5"]
+        [
+            "rename ws_2 A/plain",
+            "move ws_4 before ws_3",
+            "move ws_2 before ws_3"
+        ]
     );
     // C at the end.
     assert_eq!(
         move_to(&mut state, "ws_2", "C"),
         ["rename ws_2 C/plain", "move ws_2 before end"]
     );
-    // Right after A's last member already: no move. An unnamed space keeps its automatic label.
-    assert_eq!(move_to(&mut state, "ws_5", "A"), ["rename ws_5 A/auto"]);
+    // Right after A's last member, but A is gathered first, so the space follows it. An unnamed
+    // space keeps its automatic label.
+    assert_eq!(
+        move_to(&mut state, "ws_5", "A"),
+        [
+            "rename ws_5 A/auto",
+            "move ws_4 before ws_2",
+            "move ws_5 before ws_2"
+        ]
+    );
     // From another group: its short name.
     assert_eq!(
         move_to(&mut state, "ws_6", "B"),
@@ -2277,17 +2296,26 @@ fn a_worktree_parent_moves_to_a_group_with_its_whole_block() {
     let mut state = grouped_state(projected);
     assert_eq!(
         move_to(&mut state, "ws_2", "A"),
-        ["rename ws_2 A/p", "move ws_2,ws_4,ws_6 before end"]
+        [
+            "rename ws_2 A/p",
+            "move ws_5 before ws_3",
+            "move ws_2,ws_4,ws_6 before ws_3"
+        ]
     );
 
-    // A group whose last space is a linked child of its worktree block: after that child.
+    // A group whose last space is a linked child of its worktree block: after that child (gathered
+    // behind its parent first).
     let mut projected = named_spaces(&["G/p", "x", "plain", "c1", "y"]);
     in_worktree(&mut projected, 1, false);
     in_worktree(&mut projected, 4, true);
     let mut state = grouped_state(projected);
     assert_eq!(
         move_to(&mut state, "ws_2", "G"),
-        ["rename ws_2 G/x", "move ws_2 before ws_5"]
+        [
+            "rename ws_2 G/x",
+            "move ws_4 before ws_3",
+            "move ws_2 before ws_3"
+        ]
     );
 }
 
@@ -2332,7 +2360,18 @@ fn joining_groups_keeps_the_server_order_the_same_as_the_drawing() {
 fn no_group_renames_the_space_to_its_short_name_and_leaves_it_in_place() {
     let mut state = grouped_state(named_spaces(&["A/one", "plain", "A / two"]));
     assert_eq!(move_to(&mut state, "ws_3", "No group"), ["rename ws_3 two"]);
-    assert_eq!(move_to(&mut state, "ws_1", "No group"), ["rename ws_1 one"]);
+    // The group's first space leaves: the group's other spaces are gathered behind it, so the
+    // group stays drawn right below it instead of jumping past `plain`.
+    open_move_menu(&mut state, "ws_1");
+    let outcome = choose(&mut state, "No group");
+    assert_eq!(
+        sent(&outcome.actions),
+        ["rename ws_1 one", "move ws_3 before ws_2"]
+    );
+    apply_sent(&mut state, &sent_methods(&outcome.actions));
+    let (drawn, server) = drawn_and_server_order(&state);
+    assert_eq!(drawn, ["ws_1", "ws_3", "ws_2"]);
+    assert_eq!(drawn, server);
 }
 
 #[test]
@@ -2405,16 +2444,20 @@ fn renaming_a_space_into_an_existing_group_moves_it_after_the_groups_last_member
     projected.workspaces.push(child);
     let mut state = grouped_state(projected);
 
+    // A's spaces aren't adjacent: `three` is gathered behind `one` first.
     assert_eq!(
         rename_space(&mut state, "ws_2", " A / x "),
-        ["rename ws_2 A / x", "move ws_2 before ws_5"]
+        [
+            "rename ws_2 A / x",
+            "move ws_4 before ws_3",
+            "move ws_2 before ws_3"
+        ]
     );
-    // A new group, the same group, leaving one, another case: only the rename.
+    // A new group, the same group, leaving one, not grouped: only the rename.
     for (workspace_id, text) in [
         ("ws_2", "Z/x"),
         ("ws_3", "B/renamed"),
         ("ws_3", "two"),
-        ("ws_1", "a/one"),
         ("ws_2", "A/"),
     ] {
         assert_eq!(
@@ -2423,10 +2466,25 @@ fn renaming_a_space_into_an_existing_group_moves_it_after_the_groups_last_member
             "{workspace_id} {text:?}"
         );
     }
+    // Leaving A as its first space (into another case's group): A's other space is gathered
+    // behind it, so A doesn't jump.
+    assert_eq!(
+        rename_space(&mut state, "ws_1", "a/one"),
+        ["rename ws_1 a/one", "move ws_4 before ws_2"]
+    );
+    // Or for no group: the same.
+    assert_eq!(
+        rename_space(&mut state, "ws_1", "one"),
+        ["rename ws_1 one", "move ws_4 before ws_2"]
+    );
     // From another group, and a worktree parent with its block.
     assert_eq!(
         rename_space(&mut state, "ws_3", "A/two"),
-        ["rename ws_3 A/two", "move ws_3 before ws_5"]
+        [
+            "rename ws_3 A/two",
+            "move ws_4 before ws_2",
+            "move ws_3 before ws_2"
+        ]
     );
     assert_eq!(
         rename_space(&mut state, "ws_6", "B/p"),
@@ -2496,7 +2554,7 @@ fn a_refused_rename_sends_no_move() {
 
 #[test]
 fn move_to_group_plans_need_no_window() {
-    use crate::client::shell::space_groups::{join_group_methods, move_menu_items, rename_move};
+    use crate::client::shell::space_groups::{join_group_methods, move_menu_items, rename_moves};
 
     let plan = |projected: &ClientShellSnapshot, workspace_id: &str, group: &str| {
         join_group_methods(projected, workspace_id, group)
@@ -2504,27 +2562,47 @@ fn move_to_group_plans_need_no_window() {
             .map(described)
             .collect::<Vec<_>>()
     };
+    // A's spaces aren't adjacent in server order: joining A gathers them behind `one` first
+    // (`three` before `two`), so A's last space is the one drawn last.
     let projected = named_spaces(&["A/one", "plain", "B/two", "A/three", "other"]);
     assert_eq!(
         plan(&projected, "ws_2", "A"),
-        ["rename ws_2 A/plain", "move ws_2 before ws_5"]
+        [
+            "rename ws_2 A/plain",
+            "move ws_4 before ws_3",
+            "move ws_2 before ws_3"
+        ]
     );
     assert_eq!(
         plan(&projected, "ws_2", "B"),
         ["rename ws_2 B/plain", "move ws_2 before ws_4"]
     );
-    assert_eq!(plan(&projected, "ws_5", "A"), ["rename ws_5 A/other"]);
+    assert_eq!(
+        plan(&projected, "ws_5", "A"),
+        [
+            "rename ws_5 A/other",
+            "move ws_4 before ws_2",
+            "move ws_5 before ws_2"
+        ]
+    );
     // A group nothing is in yet: only the rename. A space that is gone: nothing.
     assert_eq!(plan(&projected, "ws_2", "New"), ["rename ws_2 New/plain"]);
     assert_eq!(plan(&projected, "ws_9", "A"), Vec::<String>::new());
 
-    let moved =
-        |label: &str| rename_move(&projected, "ws_2", label).map(|method| described(&method));
-    assert_eq!(moved("A/x").as_deref(), Some("move ws_2 before ws_5"));
+    let moved = |workspace_id: &str, label: &str| {
+        rename_moves(&projected, workspace_id, label)
+            .iter()
+            .map(described)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        moved("ws_2", "A/x"),
+        ["move ws_4 before ws_3", "move ws_2 before ws_3"]
+    );
     for label in ["x", "New/x", "a/x", "A/", "/x"] {
-        assert_eq!(moved(label), None, "{label:?}");
+        assert_eq!(moved("ws_2", label), Vec::<String>::new(), "{label:?}");
     }
-    assert_eq!(rename_move(&projected, "ws_4", "A/y"), None);
+    assert_eq!(moved("ws_4", "A/y"), Vec::<String>::new());
 
     // A second parent checkout goes where its block's head goes: never moved on its own.
     let mut projected = named_spaces(&["A/one", "Web/p", "q", "c1"]);
@@ -2532,7 +2610,7 @@ fn move_to_group_plans_need_no_window() {
     in_worktree(&mut projected, 3, false);
     in_worktree(&mut projected, 4, true);
     assert_eq!(plan(&projected, "ws_3", "A"), ["rename ws_3 A/q"]);
-    assert_eq!(rename_move(&projected, "ws_3", "A/q"), None);
+    assert!(rename_moves(&projected, "ws_3", "A/q").is_empty());
     // The block's head right after the group already: no move.
     assert_eq!(plan(&projected, "ws_2", "A"), ["rename ws_2 A/p"]);
     // A linked child under its parent: renamed, never moved on its own.
@@ -2705,4 +2783,982 @@ fn a_second_parent_checkout_goes_where_its_block_head_goes() {
             format!("   {icon} one"),
         ]
     );
+}
+
+/// The first line of the space list in a new frame; the other rows' lines count from it.
+fn list_top(state: &mut ClientShellState) -> u16 {
+    state.compose(106, 30).expect("composed frame");
+    state.hits.workspace_body.y
+}
+
+/// Presses `from` and drags to `to`; the drag's outcome.
+fn drag_to(state: &mut ClientShellState, from: (u16, u16), to: (u16, u16)) -> ClientShellInput {
+    mouse(state, MouseEventKind::Down(MouseButton::Left), from);
+    mouse(state, MouseEventKind::Drag(MouseButton::Left), to)
+}
+
+/// Drags `workspace_id`'s row (in a new frame) to line `row`, a column to the right.
+fn drag_space(state: &mut ClientShellState, workspace_id: &str, row: u16) -> (u16, u16) {
+    state.compose(106, 30).expect("composed frame");
+    let from = space_point(state, workspace_id);
+    let to = (from.0 + 1, row);
+    drag_to(state, from, to);
+    to
+}
+
+/// Drags `group`'s header (in a new frame) to line `row`, a column to the right.
+fn drag_header(state: &mut ClientShellState, group: &str, row: u16) -> (u16, u16) {
+    state.compose(106, 30).expect("composed frame");
+    let from = header_point(state, group);
+    let to = (from.0 + 1, row);
+    drag_to(state, from, to);
+    to
+}
+
+fn release(state: &mut ClientShellState, point: (u16, u16)) -> ClientShellInput {
+    mouse(state, MouseEventKind::Up(MouseButton::Left), point)
+}
+
+/// Drags `workspace_id` to line `row` and drops it there; what that sent.
+fn drop_space(state: &mut ClientShellState, workspace_id: &str, row: u16) -> Vec<String> {
+    let point = drag_space(state, workspace_id, row);
+    sent(&release(state, point).actions)
+}
+
+/// Drags `group`'s header to line `row` and drops it there; what that sent.
+fn drop_header(state: &mut ClientShellState, group: &str, row: u16) -> Vec<String> {
+    let point = drag_header(state, group, row);
+    let sent = sent(&release(state, point).actions);
+    assert!(state.group_header_press.is_none());
+    sent
+}
+
+/// The target of the group drag under way.
+fn group_target(state: &ClientShellState) -> Option<&GroupDropTarget> {
+    let Some(ClientChromeDrag::SpaceGroups(drag)) = state.chrome_drag.as_ref() else {
+        panic!("a group drag is under way");
+    };
+    drag.target.as_ref()
+}
+
+fn gap(group: Option<&str>, before: Option<&str>, row: u16, beside: bool) -> GroupDropTarget {
+    GroupDropTarget::Gap {
+        group: group.map(str::to_owned),
+        before: before.map(str::to_owned),
+        row,
+        beside,
+    }
+}
+
+/// The sidebar's space list text on line `row` of a new frame.
+fn list_line(state: &mut ClientShellState, row: u16) -> String {
+    let frame = state.compose(106, 30).expect("composed frame");
+    let body = state.hits.workspace_body;
+    frame_rows(&frame)[usize::from(row)]
+        .chars()
+        .skip(usize::from(body.x))
+        .take(usize::from(body.width))
+        .collect()
+}
+
+/// `A/one, A/two, plain, B/three, B/four, other`, drawn one line each from `top`:
+/// ` ▾ A` top, one +1, two +2, plain +3, ` ▾ B` +4, three +5, four +6, other +7.
+fn two_groups() -> (ClientShellState, u16) {
+    let mut state = grouped_state(named_spaces(&[
+        "A/one", "A/two", "plain", "B/three", "B/four", "other",
+    ]));
+    let top = list_top(&mut state);
+    (state, top)
+}
+
+#[test]
+fn dropping_a_space_on_a_header_joins_the_group_at_its_end() {
+    let (mut state, top) = two_groups();
+    drag_space(&mut state, "ws_3", top + 4);
+    assert_eq!(
+        group_target(&state),
+        Some(&GroupDropTarget::Header("B".into()))
+    );
+    assert_eq!(
+        drop_space(&mut state, "ws_3", top + 4),
+        ["rename ws_3 B/plain", "move ws_3 before ws_6"]
+    );
+    assert!(state.chrome_drag.is_none());
+
+    // A folded group's header too.
+    click_header(&mut state, "B");
+    assert!(state.collapsed_groups.contains("group:B"));
+    assert_eq!(header_point(&state, "B").1, top + 4);
+    assert_eq!(
+        drop_space(&mut state, "ws_3", top + 4),
+        ["rename ws_3 B/plain", "move ws_3 before ws_6"]
+    );
+    // And from another group.
+    assert_eq!(
+        drop_space(&mut state, "ws_1", top + 4),
+        ["rename ws_1 B/one", "move ws_1 before ws_6"]
+    );
+}
+
+#[test]
+fn a_space_on_its_own_groups_header_goes_to_the_groups_first_place() {
+    let (mut state, top) = two_groups();
+    // On its own header a space goes to its group's first place, which for the first member is
+    // no change.
+    drag_space(&mut state, "ws_1", top);
+    assert_eq!(
+        group_target(&state),
+        Some(&gap(Some("A"), Some("ws_1"), top, true))
+    );
+    assert_eq!(drop_space(&mut state, "ws_1", top), Vec::<String>::new());
+    // For the second member it is a reorder to the top of the group.
+    assert_eq!(
+        drop_space(&mut state, "ws_2", top),
+        ["move ws_2 before ws_1"]
+    );
+}
+
+#[test]
+fn dropping_a_space_between_a_groups_members_joins_it_there() {
+    let (mut state, top) = two_groups();
+    drag_space(&mut state, "ws_3", top + 5);
+    assert_eq!(
+        group_target(&state),
+        Some(&gap(Some("B"), Some("ws_5"), top + 5, false))
+    );
+    let point = (space_point(&state, "ws_3").0 + 1, top + 5);
+    let outcome = release(&mut state, point);
+    assert_eq!(
+        sent(&outcome.actions),
+        ["rename ws_3 B/plain", "move ws_3 before ws_5"]
+    );
+    apply_sent(&mut state, &sent_methods(&outcome.actions));
+    let (drawn, server) = drawn_and_server_order(&state);
+    assert_eq!(drawn, ["ws_1", "ws_2", "ws_4", "ws_3", "ws_5", "ws_6"]);
+    assert_eq!(drawn, server);
+    let icon = icon(&state);
+    assert_eq!(
+        body_lines(&mut state, 8),
+        [
+            " ▾ A".to_owned(),
+            format!("   {icon} one"),
+            format!("   {icon} two"),
+            " ▾ B".to_owned(),
+            format!("   {icon} three"),
+            format!("   {icon} plain"),
+            format!("   {icon} four"),
+            format!(" {icon} other"),
+        ]
+    );
+}
+
+#[test]
+fn dropping_a_space_between_a_header_and_its_first_member_joins_as_first() {
+    // Two-line rows (a branch line), so the first member's top line is nearer that gap.
+    let mut projected = named_spaces(&["plain", "A/one", "A/two", "B/three", "B/four"]);
+    for workspace in &mut projected.workspaces {
+        workspace.branch = Some("main".into());
+    }
+    let mut state = grouped_state(projected);
+    state.compose(106, 30).expect("composed frame");
+    let header = header_point(&state, "B").1;
+    assert_eq!(row_of(&state, "ws_4"), header + 1);
+    drag_space(&mut state, "ws_1", header + 1);
+    assert_eq!(
+        group_target(&state),
+        Some(&gap(Some("B"), Some("ws_4"), header, false))
+    );
+    let point = (space_point(&state, "ws_1").0 + 1, header + 1);
+    let outcome = release(&mut state, point);
+    assert_eq!(
+        sent(&outcome.actions),
+        ["rename ws_1 B/plain", "move ws_1 before ws_4"]
+    );
+    apply_sent(&mut state, &sent_methods(&outcome.actions));
+    let (drawn, server) = drawn_and_server_order(&state);
+    assert_eq!(drawn, ["ws_2", "ws_3", "ws_1", "ws_4", "ws_5"]);
+    assert_eq!(drawn, server);
+}
+
+fn row_of(state: &ClientShellState, workspace_id: &str) -> u16 {
+    space_point(state, workspace_id).1
+}
+
+#[test]
+fn dropping_a_member_inside_its_own_group_reorders_it_without_a_rename() {
+    let mut state = grouped_state(named_spaces(&["A/one", "A/two", "A/three", "plain"]));
+    let top = list_top(&mut state);
+    // Between two and three.
+    assert_eq!(
+        drop_space(&mut state, "ws_1", top + 2),
+        ["move ws_1 before ws_3"]
+    );
+    // Last in the group is the top-level gap after it: that leaves the group.
+    assert_eq!(
+        drop_space(&mut state, "ws_1", top + 3),
+        ["rename ws_1 one", "move ws_1 before ws_4"]
+    );
+}
+
+#[test]
+fn dropping_a_grouped_space_between_top_level_rows_leaves_its_group() {
+    let (mut state, top) = two_groups();
+    // Before the group's own header.
+    assert_eq!(
+        drop_space(&mut state, "ws_2", top - 1),
+        ["rename ws_2 two", "move ws_2 before ws_1"]
+    );
+    // Right after the group's last member: the server order stays, only the name changes.
+    assert_eq!(drop_space(&mut state, "ws_2", top + 2), ["rename ws_2 two"]);
+    // Right after another group (before an ungrouped row), and before another group's header.
+    assert_eq!(
+        drop_space(&mut state, "ws_1", top + 6),
+        ["rename ws_1 one", "move ws_1 before ws_6"]
+    );
+    let point = drag_space(&mut state, "ws_5", top + 3);
+    assert_eq!(
+        group_target(&state),
+        Some(&gap(None, Some("ws_4"), top + 3, false))
+    );
+    let outcome = release(&mut state, point);
+    assert_eq!(
+        sent(&outcome.actions),
+        ["rename ws_5 four", "move ws_5 before ws_4"]
+    );
+    apply_sent(&mut state, &sent_methods(&outcome.actions));
+    let (drawn, server) = drawn_and_server_order(&state);
+    assert_eq!(drawn, ["ws_1", "ws_2", "ws_3", "ws_5", "ws_4", "ws_6"]);
+    assert_eq!(drawn, server);
+}
+
+#[test]
+fn dropping_a_space_at_the_end_puts_it_last_at_the_top_level() {
+    let (mut state, top) = two_groups();
+    drag_space(&mut state, "ws_1", top + 8);
+    assert_eq!(group_target(&state), Some(&gap(None, None, top + 8, false)));
+    assert_eq!(
+        drop_space(&mut state, "ws_1", top + 8),
+        ["rename ws_1 one", "move ws_1 before end"]
+    );
+    // An ungrouped space only moves.
+    assert_eq!(
+        drop_space(&mut state, "ws_3", top + 8),
+        ["move ws_3 before end"]
+    );
+    // Already last: nothing.
+    assert_eq!(
+        drop_space(&mut state, "ws_6", top + 8),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn an_ungrouped_space_between_top_level_rows_only_moves() {
+    let (mut state, top) = two_groups();
+    assert_eq!(
+        drop_space(&mut state, "ws_6", top + 2),
+        ["move ws_6 before ws_3"]
+    );
+    assert_eq!(
+        drop_space(&mut state, "ws_6", top - 1),
+        ["move ws_6 before ws_1"]
+    );
+    assert_eq!(
+        drop_space(&mut state, "ws_3", top + 6),
+        ["move ws_3 before ws_6"]
+    );
+}
+
+#[test]
+fn a_leaving_space_whose_short_name_has_a_slash_moves_and_asks_for_its_name() {
+    let mut state = grouped_state(named_spaces(&["Web/app/x", "Web/two", "plain"]));
+    let top = list_top(&mut state);
+    assert_eq!(
+        drop_space(&mut state, "ws_1", top + 4),
+        ["move ws_1 before end"]
+    );
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::Rename(ClientRenameOverlay {
+            title: "rename workspace",
+            ref input,
+            target: ClientRenameTarget::Workspace { ref workspace_id },
+        })) if input.as_str() == "app/x" && workspace_id == "ws_1"
+    ));
+    key(&mut state, KeyCode::Esc);
+    // Joining another group keeps the whole short name.
+    let mut state = grouped_state(named_spaces(&["Web/app/x", "B/two"]));
+    let top = list_top(&mut state);
+    assert_eq!(
+        drop_space(&mut state, "ws_1", top + 2),
+        ["rename ws_1 B/app/x", "move ws_1 before end"]
+    );
+    assert!(state.overlay.is_none());
+}
+
+/// `A/one, A/two, p, c, plain`: `p` a worktree parent, `c` its linked child. Drawn ` ▾ A` top,
+/// one +1, two +2, p +3, c +4, plain +5.
+fn group_and_worktree() -> (ClientShellState, u16) {
+    let mut projected = named_spaces(&["A/one", "A/two", "p", "c", "plain"]);
+    in_worktree(&mut projected, 3, false);
+    in_worktree(&mut projected, 4, true);
+    let mut state = grouped_state(projected);
+    let top = list_top(&mut state);
+    (state, top)
+}
+
+#[test]
+fn a_worktree_parent_dragged_into_a_group_carries_its_children() {
+    let (mut state, top) = group_and_worktree();
+    assert_eq!(row_of(&state, "ws_4"), top + 4);
+    let point = drag_space(&mut state, "ws_3", top + 1);
+    let outcome = release(&mut state, point);
+    assert_eq!(
+        sent(&outcome.actions),
+        ["rename ws_3 A/p", "move ws_3,ws_4 before ws_2"]
+    );
+    apply_sent(&mut state, &sent_methods(&outcome.actions));
+    let (drawn, server) = drawn_and_server_order(&state);
+    assert_eq!(drawn, ["ws_1", "ws_3", "ws_4", "ws_2", "ws_5"]);
+    assert_eq!(drawn, server);
+
+    // No gap inside the block: on the parent's line the nearest gaps are around the block.
+    let (mut state, top) = group_and_worktree();
+    drag_space(&mut state, "ws_5", top + 3);
+    assert_eq!(
+        group_target(&state),
+        Some(&gap(None, Some("ws_3"), top + 2, false))
+    );
+}
+
+#[test]
+fn linked_children_and_second_parents_are_not_dragged() {
+    let (mut state, top) = group_and_worktree();
+    let point = drag_space(&mut state, "ws_4", top);
+    assert!(state.chrome_drag.is_none());
+    // The release is a click on the child, as upstream: it focuses it.
+    let release = release(&mut state, point);
+    assert!(matches!(
+        &release.actions[..],
+        [ClientShellAction::Endpoint { request, .. }]
+            if matches!(
+                &request.method,
+                crate::api::schema::Method::WorkspaceFocus(target) if target.workspace_id == "ws_4"
+            )
+    ));
+
+    // A second parent checkout of the block: its head places it.
+    let mut projected = named_spaces(&["p", "q", "c", "A/one"]);
+    in_worktree(&mut projected, 1, false);
+    in_worktree(&mut projected, 2, false);
+    in_worktree(&mut projected, 3, true);
+    let mut state = grouped_state(projected);
+    let top = list_top(&mut state);
+    assert_eq!(header_point(&state, "A").1, top + 3);
+    drag_space(&mut state, "ws_2", top + 3);
+    assert!(state.chrome_drag.is_none());
+    // The head moves with the whole block.
+    assert_eq!(
+        drop_space(&mut state, "ws_1", top + 3),
+        ["rename ws_1 A/p", "move ws_1,ws_2,ws_3 before end"]
+    );
+}
+
+#[test]
+fn a_before_inside_the_dragged_block_gives_way_to_the_next_space() {
+    // The child comes first in server order; the block is drawn at its place.
+    let mut projected = named_spaces(&["c", "A/one", "Web/p"]);
+    in_worktree(&mut projected, 1, true);
+    in_worktree(&mut projected, 3, false);
+    let mut state = grouped_state(projected);
+    let top = list_top(&mut state);
+    assert_eq!(header_point(&state, "Web").1, top);
+    // Before its own header: the group's first space is the child, which moves with it.
+    let point = drag_space(&mut state, "ws_3", top - 1);
+    assert_eq!(
+        group_target(&state),
+        Some(&gap(None, Some("ws_1"), top - 1, false))
+    );
+    let outcome = release(&mut state, point);
+    assert_eq!(
+        sent(&outcome.actions),
+        ["rename ws_3 p", "move ws_3,ws_1 before ws_2"]
+    );
+    apply_sent(&mut state, &sent_methods(&outcome.actions));
+    let (drawn, server) = drawn_and_server_order(&state);
+    assert_eq!(drawn, ["ws_3", "ws_1", "ws_2"]);
+    assert_eq!(drawn, server);
+}
+
+/// `A/one, plain, A/p, c, B/x`: `p` a worktree parent, `c` its linked child. Drawn ` ▾ A` top,
+/// one +1, p +2, c +3, plain +4, ` ▾ B` +5, x +6.
+fn group_with_worktree() -> (ClientShellState, u16) {
+    let mut projected = named_spaces(&["A/one", "plain", "A/p", "c", "B/x"]);
+    in_worktree(&mut projected, 3, false);
+    in_worktree(&mut projected, 4, true);
+    let mut state = grouped_state(projected);
+    let top = list_top(&mut state);
+    (state, top)
+}
+
+#[test]
+fn dragging_a_header_moves_its_whole_group() {
+    let (mut state, top) = group_with_worktree();
+    assert_eq!(header_point(&state, "B").1, top + 5);
+    let point = drag_header(&mut state, "A", top + 7);
+    assert_eq!(group_target(&state), Some(&gap(None, None, top + 7, false)));
+    let outcome = release(&mut state, point);
+    assert_eq!(sent(&outcome.actions), ["move ws_1,ws_3,ws_4 before end"]);
+    assert!(
+        state.collapsed_groups.is_empty(),
+        "the release doesn't fold"
+    );
+    assert!(state.group_header_press.is_none() && state.chrome_drag.is_none());
+    apply_sent(&mut state, &sent_methods(&outcome.actions));
+    let (drawn, server) = drawn_and_server_order(&state);
+    assert_eq!(drawn, ["ws_2", "ws_5", "ws_1", "ws_3", "ws_4"]);
+    assert_eq!(drawn, server);
+
+    // Between top-level rows: before B.
+    let (mut state, top) = group_with_worktree();
+    assert_eq!(
+        drop_header(&mut state, "A", top + 4),
+        ["move ws_1,ws_3,ws_4 before ws_5"]
+    );
+    // B to the top.
+    assert_eq!(
+        drop_header(&mut state, "B", top - 1),
+        ["move ws_5 before ws_1"]
+    );
+    assert!(state.collapsed_groups.is_empty());
+}
+
+#[test]
+fn a_header_drops_nowhere_on_a_header_or_inside_a_group() {
+    let (mut state, top) = group_with_worktree();
+    // B's header, inside A, A's own header.
+    for row in [top + 5, top + 1, top] {
+        let point = drag_header(&mut state, "A", row);
+        assert_eq!(group_target(&state), None, "line {row}");
+        assert!(release(&mut state, point).actions.is_empty());
+        assert!(state.collapsed_groups.is_empty());
+    }
+    // A folded group's header too, and its drag starts on the header's own line.
+    click_header(&mut state, "B");
+    let header = header_point(&state, "A");
+    drag_to(&mut state, header, (header.0 + 1, header.1));
+    assert_eq!(group_target(&state), None);
+    mouse(
+        &mut state,
+        MouseEventKind::Drag(MouseButton::Left),
+        (header.0, top + 5),
+    );
+    assert_eq!(group_target(&state), None);
+    assert!(release(&mut state, (header.0, top + 5)).actions.is_empty());
+    assert_eq!(
+        state.collapsed_groups,
+        HashSet::from(["group:B".to_owned()])
+    );
+
+    // Over the middle member of a three-member group.
+    let mut state = grouped_state(named_spaces(&["A/a", "B/one", "B/two", "B/three", "plain"]));
+    let top = list_top(&mut state);
+    assert_eq!(row_of(&state, "ws_3"), top + 4);
+    let point = drag_header(&mut state, "A", top + 4);
+    assert_eq!(group_target(&state), None);
+    assert!(release(&mut state, point).actions.is_empty());
+}
+
+#[test]
+fn drops_that_change_nothing_send_nothing() {
+    let (mut state, top) = two_groups();
+    // Right before and right after a member, in its group.
+    for (workspace_id, row) in [("ws_1", top), ("ws_1", top + 1), ("ws_2", top + 1)] {
+        assert_eq!(
+            drop_space(&mut state, workspace_id, row),
+            Vec::<String>::new(),
+            "{workspace_id} at line {row}"
+        );
+    }
+    // Right before and right after a top-level space.
+    for row in [top + 2, top + 3] {
+        assert_eq!(drop_space(&mut state, "ws_3", row), Vec::<String>::new());
+    }
+    // A header right before or right after its group.
+    for row in [top - 1, top + 2] {
+        assert_eq!(drop_header(&mut state, "A", row), Vec::<String>::new());
+    }
+    assert_eq!(drop_header(&mut state, "B", top + 6), Vec::<String>::new());
+}
+
+#[test]
+fn the_drop_target_is_drawn_inside_a_group_across_the_list_or_on_a_header() {
+    let (mut state, top) = two_groups();
+    // Inside B: from the member indent.
+    drag_space(&mut state, "ws_3", top + 5);
+    let line = list_line(&mut state, top + 5);
+    assert!(line.starts_with("  ──"), "{line:?}");
+    assert!(!line.contains("three"));
+    release(&mut state, (0, 0));
+
+    // At the top level: the whole width, as upstream.
+    drag_space(&mut state, "ws_1", top + 6);
+    let line = list_line(&mut state, top + 6);
+    assert!(line.starts_with("────"), "{line:?}");
+    release(&mut state, (0, 0));
+
+    // On a header: no line, the header highlighted, the dragged space as upstream.
+    drag_space(&mut state, "ws_3", top + 4);
+    let buffer = state
+        .compose(106, 30)
+        .expect("composed frame")
+        .to_ratatui_buffer()
+        .expect("buffer");
+    let palette = &state.config.palette;
+    let highlight = if palette.selection_bg == ratatui::style::Color::Reset {
+        palette.active_row_bg
+    } else {
+        palette.selection_bg
+    };
+    let header = state
+        .hits
+        .group_headers
+        .iter()
+        .find(|hit| hit.group == "B")
+        .expect("header B")
+        .rect;
+    for x in header.x..header.right() {
+        assert_eq!(buffer[(x, header.y)].bg, highlight, "column {x}");
+    }
+    let plain = state
+        .hits
+        .workspaces
+        .iter()
+        .find(|hit| hit.workspace_id == "ws_3")
+        .expect("dragged row")
+        .rect;
+    assert_eq!(buffer[(plain.x, plain.y)].bg, palette.surface1);
+    let body = state.hits.workspace_body;
+    for y in body.y.saturating_sub(1)..body.bottom() {
+        for x in body.x..body.right() {
+            assert_ne!(buffer[(x, y)].symbol(), "─", "cell {x},{y}");
+        }
+    }
+    release(&mut state, (0, 0));
+}
+
+#[test]
+fn a_dragged_header_gets_the_dragged_background() {
+    let (mut state, top) = two_groups();
+    drag_header(&mut state, "A", top + 3);
+    let buffer = state
+        .compose(106, 30)
+        .expect("composed frame")
+        .to_ratatui_buffer()
+        .expect("buffer");
+    let header = state
+        .hits
+        .group_headers
+        .iter()
+        .find(|hit| hit.group == "A")
+        .expect("header A")
+        .rect;
+    for x in header.x..header.right() {
+        assert_eq!(
+            buffer[(x, header.y)].bg,
+            state.config.palette.surface1,
+            "column {x}"
+        );
+    }
+    // Its line is the top-level one, before B.
+    assert!(list_line(&mut state, top + 3).starts_with("────"));
+}
+
+#[test]
+fn a_refused_drop_rename_sends_no_move() {
+    let (mut state, top) = two_groups();
+    state.set_endpoint_methods(Some(vec!["workspace.move_block".into()]));
+    assert_eq!(
+        drop_space(&mut state, "ws_3", top + 5),
+        Vec::<String>::new()
+    );
+    // A move alone still goes.
+    assert_eq!(
+        drop_space(&mut state, "ws_6", top + 2),
+        ["move ws_6 before ws_3"]
+    );
+}
+
+#[test]
+fn without_groups_the_drag_is_upstreams() {
+    let mut state = grouped_state(named_spaces(&["one", "two", "three"]));
+    let top = list_top(&mut state);
+    drag_space(&mut state, "ws_1", top + 3);
+    assert!(matches!(
+        state.chrome_drag,
+        Some(ClientChromeDrag::Workspace {
+            ref source_workspace_id,
+            target: Some((None, row)),
+        }) if source_workspace_id == "ws_1" && row == top + 3
+    ));
+    let release = release(&mut state, (0, top + 3));
+    assert!(matches!(
+        &release.actions[..],
+        [ClientShellAction::Endpoint { request, .. }]
+            if matches!(
+                &request.method,
+                crate::api::schema::Method::WorkspaceMove(params)
+                    if params.workspace_id == "ws_1" && params.insert_index == 3
+            )
+    ));
+
+    drag_space(&mut state, "ws_3", top);
+    assert!(matches!(
+        state.chrome_drag,
+        Some(ClientChromeDrag::Workspace {
+            target: Some((Some(ref before), row)),
+            ..
+        }) if before == "ws_2" && row == top
+    ));
+    let frame = state.compose(106, 30).expect("composed frame");
+    let body = state.hits.workspace_body;
+    assert!(frame_rows(&frame)[usize::from(top)]
+        .chars()
+        .skip(usize::from(body.x))
+        .take(usize::from(body.width))
+        .all(|symbol| symbol == '─'));
+}
+
+#[test]
+fn a_folded_group_offers_its_header_but_no_gaps_between_members() {
+    let mut state = grouped_state(focused_on(
+        named_spaces(&["A/one", "A/two", "plain"]),
+        "ws_2",
+    ));
+    let top = list_top(&mut state);
+    click_header(&mut state, "A");
+    let icon = icon(&state);
+    assert_eq!(
+        body_lines(&mut state, 3),
+        [
+            format!(" ▸ {icon} A"),
+            format!("   {icon} two"),
+            format!(" {icon} plain"),
+        ]
+    );
+    // The shown member back on its own header: the group's first place (a reorder, no rename).
+    drag_space(&mut state, "ws_2", top);
+    assert_eq!(
+        group_target(&state),
+        Some(&gap(Some("A"), Some("ws_1"), top, false))
+    );
+    assert_eq!(
+        sent(&release(&mut state, (0, 0)).actions),
+        ["move ws_2 before ws_1"]
+    );
+    // Leaving the group is the line above the header.
+    drag_space(&mut state, "ws_2", top - 1);
+    assert_eq!(
+        group_target(&state),
+        Some(&gap(None, Some("ws_1"), top - 1, false))
+    );
+    release(&mut state, (0, 0));
+    // Another space on the folded header joins it.
+    drag_space(&mut state, "ws_3", top);
+    assert_eq!(
+        group_target(&state),
+        Some(&GroupDropTarget::Header("A".into()))
+    );
+    assert_eq!(
+        sent(&release(&mut state, (0, 0)).actions),
+        ["rename ws_3 A/plain"]
+    );
+}
+
+#[test]
+fn a_gap_before_a_worktree_block_goes_before_its_first_space_in_server_order() {
+    // The child comes first in server order: the block is drawn at its place, and a space dropped
+    // above the block's parent row goes before the child.
+    let mut projected = named_spaces(&["c", "A/one", "p", "other"]);
+    in_worktree(&mut projected, 1, true);
+    in_worktree(&mut projected, 3, false);
+    let mut state = grouped_state(projected);
+    let top = list_top(&mut state);
+    assert_eq!(row_of(&state, "ws_3"), top);
+    let point = drag_space(&mut state, "ws_4", top - 1);
+    assert_eq!(
+        group_target(&state),
+        Some(&gap(None, Some("ws_1"), top - 1, false))
+    );
+    let outcome = release(&mut state, point);
+    assert_eq!(sent(&outcome.actions), ["move ws_4 before ws_1"]);
+    apply_sent(&mut state, &sent_methods(&outcome.actions));
+    let (drawn, _) = drawn_and_server_order(&state);
+    assert_eq!(drawn, ["ws_4", "ws_3", "ws_1", "ws_2"]);
+}
+
+#[test]
+fn a_grouped_space_dropped_between_two_ungrouped_rows_leaves_its_group_there() {
+    let mut state = grouped_state(named_spaces(&["A/one", "A/two", "x", "y"]));
+    let top = list_top(&mut state);
+    let point = drag_space(&mut state, "ws_1", top + 3);
+    assert_eq!(
+        group_target(&state),
+        Some(&gap(None, Some("ws_4"), top + 3, false))
+    );
+    let outcome = release(&mut state, point);
+    assert_eq!(
+        sent(&outcome.actions),
+        ["rename ws_1 one", "move ws_1 before ws_4"]
+    );
+    apply_sent(&mut state, &sent_methods(&outcome.actions));
+    let (drawn, server) = drawn_and_server_order(&state);
+    assert_eq!(drawn, ["ws_2", "ws_3", "ws_1", "ws_4"]);
+    assert_eq!(drawn, server);
+}
+
+/// Drags `workspace_id` to line `row` and drops it; checks what it sent, then applies it and checks
+/// the drawn order (which the server order then matches).
+fn drop_and_apply(
+    state: &mut ClientShellState,
+    workspace_id: &str,
+    row: u16,
+    expected: &[&str],
+    drawn: &[&str],
+) {
+    let point = drag_space(state, workspace_id, row);
+    let outcome = release(state, point);
+    assert_eq!(sent(&outcome.actions), expected);
+    apply_sent(state, &sent_methods(&outcome.actions));
+    let (now, server) = drawn_and_server_order(state);
+    assert_eq!(now, drawn);
+    assert_eq!(now, server);
+}
+
+#[test]
+fn moving_the_first_space_of_a_scattered_group_gathers_the_group_where_it_is_drawn() {
+    // `B/b1, x, B/a1, y` is drawn ` ▾ B` b1 a1, x, y: B sits at b1's place.
+    let mut state = grouped_state(named_spaces(&["B/b1", "x", "B/a1", "y"]));
+    let top = list_top(&mut state);
+    // Right after itself: nothing, not even the gathering.
+    assert_eq!(
+        drop_space(&mut state, "ws_1", top + 1),
+        Vec::<String>::new()
+    );
+    // b1 to just below the group: B stays where it is, b1 right below it.
+    drop_and_apply(
+        &mut state,
+        "ws_1",
+        top + 2,
+        &[
+            "rename ws_1 b1",
+            "move ws_3 before ws_2",
+            "move ws_1 before ws_2",
+        ],
+        &["ws_3", "ws_1", "ws_2", "ws_4"],
+    );
+
+    // A reorder inside the group.
+    let mut state = grouped_state(named_spaces(&["B/b1", "x", "B/a1", "B/a2"]));
+    let top = list_top(&mut state);
+    drop_and_apply(
+        &mut state,
+        "ws_1",
+        top + 2,
+        &["move ws_3,ws_4 before ws_2", "move ws_1 before ws_4"],
+        &["ws_3", "ws_1", "ws_4", "ws_2"],
+    );
+
+    // Into another group: by its header, and by "Move to group".
+    let layout = ["B/b1", "x", "B/a1", "A/z"];
+    let mut state = grouped_state(named_spaces(&layout));
+    let top = list_top(&mut state);
+    assert_eq!(header_point(&state, "A").1, top + 4);
+    let joined = [
+        "rename ws_1 A/b1",
+        "move ws_3 before ws_2",
+        "move ws_1 before end",
+    ];
+    drop_and_apply(
+        &mut state,
+        "ws_1",
+        top + 4,
+        &joined,
+        &["ws_3", "ws_2", "ws_4", "ws_1"],
+    );
+    let mut state = grouped_state(named_spaces(&layout));
+    assert_eq!(move_to(&mut state, "ws_1", "A"), joined);
+}
+
+#[test]
+fn joining_a_scattered_group_gathers_it_first() {
+    // `A/t1, x, A/t2, plain` is drawn ` ▾ A` t1 t2, x, plain.
+    let mut state = grouped_state(named_spaces(&["A/t1", "x", "A/t2", "plain"]));
+    let top = list_top(&mut state);
+    drop_and_apply(
+        &mut state,
+        "ws_4",
+        top + 1,
+        &[
+            "rename ws_4 A/plain",
+            "move ws_3 before ws_2",
+            "move ws_4 before ws_3",
+        ],
+        &["ws_1", "ws_4", "ws_3", "ws_2"],
+    );
+}
+
+/// `A/a, B/b, C/c, D/d, plain` with `plain` focused and every group folded: drawn ` ▸ A` top,
+/// ` ▸ B` +1, ` ▸ C` +2, ` ▸ D` +3, plain +4.
+fn folded_groups() -> (ClientShellState, u16) {
+    let mut state = grouped_state(focused_on(
+        named_spaces(&["A/a", "B/b", "C/c", "D/d", "plain"]),
+        "ws_5",
+    ));
+    for group in ["A", "B", "C", "D"] {
+        state.compose(106, 30).expect("composed frame");
+        click_header(&mut state, group);
+    }
+    let top = list_top(&mut state);
+    assert_eq!(header_point(&state, "D").1, top + 3);
+    (state, top)
+}
+
+#[test]
+fn a_header_drops_between_folded_groups_on_their_header_lines() {
+    let (mut state, top) = folded_groups();
+    // On A's line: the gap after A, before B.
+    drag_header(&mut state, "D", top);
+    assert_eq!(
+        group_target(&state),
+        Some(&gap(None, Some("ws_2"), top, false))
+    );
+    assert_eq!(drop_header(&mut state, "D", top), ["move ws_4 before ws_2"]);
+    assert_eq!(
+        drop_header(&mut state, "D", top + 1),
+        ["move ws_4 before ws_3"]
+    );
+    // On C's line the gap right before D: nothing changes. On its own header: nowhere.
+    assert_eq!(drop_header(&mut state, "D", top + 2), Vec::<String>::new());
+    drag_header(&mut state, "D", top + 3);
+    assert_eq!(group_target(&state), None);
+    release(&mut state, (0, 0));
+    // A space on a folded header joins it (the header keeps its line).
+    drag_space(&mut state, "ws_5", top + 1);
+    assert_eq!(
+        group_target(&state),
+        Some(&GroupDropTarget::Header("B".into()))
+    );
+    release(&mut state, (0, 0));
+}
+
+#[test]
+fn a_drop_whose_next_space_has_gone_sends_nothing() {
+    let (mut state, top) = two_groups();
+    drag_space(&mut state, "ws_3", top + 5);
+    assert_eq!(
+        group_target(&state),
+        Some(&gap(Some("B"), Some("ws_5"), top + 5, false))
+    );
+    // `four` closes before the release.
+    let mut projected = (**state.snapshot.as_ref().expect("snapshot")).clone();
+    projected.revision += 1;
+    projected
+        .workspaces
+        .retain(|workspace| workspace.workspace_id != "ws_5");
+    let mut projected_surface = surface();
+    projected_surface.projection_revision = projected.revision;
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(projected_surface);
+    assert!(matches!(
+        state.chrome_drag,
+        Some(ClientChromeDrag::SpaceGroups(_))
+    ));
+    assert!(release(&mut state, (0, 0)).actions.is_empty());
+}
+
+#[test]
+fn a_scrolled_list_offers_the_gap_before_the_next_row_below_the_last_row_shown() {
+    // Two-line spaces under a one-line header leave a spare line at the bottom of an even body.
+    let mut labels = vec!["G/g".to_owned()];
+    labels.extend((1..=30).map(|number| format!("s{number}")));
+    let mut projected = named_spaces(&labels.iter().map(String::as_str).collect::<Vec<_>>());
+    for workspace in &mut projected.workspaces {
+        workspace.branch = Some("main".into());
+    }
+    let mut state = grouped_state(projected);
+    // The first frame height with a spare line and a few spaces shown (`ws_2` not the last).
+    let (height, number, spare) = (20..60)
+        .find_map(|height| {
+            state.compose(106, height).expect("composed frame");
+            let last = state.hits.workspaces.last()?;
+            let number = last
+                .workspace_id
+                .strip_prefix("ws_")
+                .and_then(|number| number.parse::<usize>().ok())?;
+            (number >= 4 && last.rect.bottom() < state.hits.new_workspace.y).then_some((
+                height,
+                number,
+                last.rect.bottom(),
+            ))
+        })
+        .expect("a frame with a spare line");
+    assert!(number < 31, "rows are hidden below");
+    let next = format!("ws_{}", number + 1);
+    state.compose(106, height).expect("composed frame");
+    let from = space_point(&state, "ws_2");
+    drag_to(&mut state, from, (from.0 + 1, spare));
+    assert_eq!(
+        group_target(&state),
+        Some(&gap(None, Some(&next), spare, false))
+    );
+    assert_eq!(
+        sent(&release(&mut state, (0, spare)).actions),
+        [format!("move ws_2 before {next}")]
+    );
+}
+
+#[test]
+fn a_slash_name_that_draws_no_header_keeps_upstreams_drag() {
+    // A linked child named `feature/x` under an ungrouped parent: no header is drawn.
+    let mut projected = named_spaces(&["p", "q", "feature/x", "other"]);
+    in_worktree(&mut projected, 1, false);
+    in_worktree(&mut projected, 2, false);
+    in_worktree(&mut projected, 3, true);
+    let mut state = grouped_state(projected);
+    let top = list_top(&mut state);
+    assert!(state.hits.group_headers.is_empty());
+    drag_space(&mut state, "ws_4", top - 1);
+    assert!(matches!(
+        state.chrome_drag,
+        Some(ClientChromeDrag::Workspace { .. })
+    ));
+    release(&mut state, (0, 0));
+    // A second parent checkout drags as upstream lets it.
+    drag_space(&mut state, "ws_2", top + 3);
+    assert!(matches!(
+        state.chrome_drag,
+        Some(ClientChromeDrag::Workspace { ref source_workspace_id, .. }) if source_workspace_id == "ws_2"
+    ));
+}
+
+#[test]
+fn a_folded_groups_shown_member_has_no_gap_before_it() {
+    // Two-line rows: on the shown member's top line the nearest gaps would tie, one before the
+    // member (inside the folded group, not offered) and one after it.
+    let mut projected = focused_on(named_spaces(&["A/one", "A/two", "plain"]), "ws_2");
+    for workspace in &mut projected.workspaces {
+        workspace.branch = Some("main".into());
+    }
+    let mut state = grouped_state(projected);
+    state.compose(106, 30).expect("composed frame");
+    click_header(&mut state, "A");
+    let top = list_top(&mut state);
+    assert_eq!(row_of(&state, "ws_2"), top + 1);
+    drag_space(&mut state, "ws_3", top + 1);
+    assert_eq!(
+        group_target(&state),
+        Some(&gap(None, Some("ws_3"), top + 2, true))
+    );
+    assert!(release(&mut state, (0, 0)).actions.is_empty());
 }
