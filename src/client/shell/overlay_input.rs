@@ -935,7 +935,6 @@ impl ClientShellState {
             return;
         };
         let trimmed = rename.input.trim();
-        let group_move = self.rename_group_move(&rename.target, trimmed);
         let method = match rename.target {
             ClientRenameTarget::NewWorkspace {
                 source_workspace_id,
@@ -992,12 +991,10 @@ impl ClientShellState {
                 self.rename_space_group(&name, trimmed, outcome);
                 None
             }
-            ClientRenameTarget::SpaceNewGroup { workspace_id } => {
-                super::space_groups::new_group_rename(workspace_id, trimmed)
-            }
+            ClientRenameTarget::SpaceName(target) => self.save_space_name(target, trimmed, outcome),
         };
         if let Some(method) = method {
-            self.push_rename(method, group_move, outcome);
+            self.push_rename(method, outcome);
         }
         outcome.repaint = true;
     }

@@ -1,6 +1,6 @@
 use super::*;
 use crate::client::shell::space_groups::drag::{GroupDragSource, GroupDropTarget};
-use crate::client::shell::space_groups::split_name;
+use crate::client::shell::space_groups::{split_name, SpaceName};
 
 fn space(number: usize, label: &str, custom_label: bool) -> ClientShellWorkspace {
     let mut workspace = snapshot().workspaces[0].clone();
@@ -506,36 +506,41 @@ fn collapsed_rail_lists_and_numbers_spaces_in_the_grouped_order() {
 
 #[test]
 fn collapsed_rail_keeps_server_order_without_groups() {
-    // The expanded sidebar draws the linked worktree `feature` under `repo`, before `plain`.
-    let mut projected = named_spaces(&["repo", "plain", "feature"]);
-    in_worktree(&mut projected, 1, false);
-    in_worktree(&mut projected, 3, true);
-    let mut state = grouped_state(projected);
-    state.compose(106, 30).expect("expanded sidebar");
-    let expanded = state
-        .hits
-        .workspaces
-        .iter()
-        .map(|hit| hit.workspace_id.clone())
-        .collect::<Vec<_>>();
-    assert_eq!(expanded, ["ws_1", "ws_3", "ws_2"]);
+    // The expanded sidebar draws the linked worktree under `repo`, before `plain`. Its own `/`
+    // name draws no header (its block's head decides), so there are no groups either.
+    for child in ["feature", "feature/login"] {
+        let mut projected = named_spaces(&["repo", "plain", child]);
+        in_worktree(&mut projected, 1, false);
+        in_worktree(&mut projected, 3, true);
+        let mut state = grouped_state(projected);
+        state.compose(106, 30).expect("expanded sidebar");
+        assert!(state.hits.group_headers.is_empty());
+        let expanded = state
+            .hits
+            .workspaces
+            .iter()
+            .map(|hit| hit.workspace_id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(expanded, ["ws_1", "ws_3", "ws_2"]);
 
-    state.sidebar_collapsed = true;
-    state.compose(106, 30).expect("collapsed sidebar");
-    let rail = state
-        .hits
-        .workspaces
-        .iter()
-        .map(|hit| hit.workspace_id.clone())
-        .collect::<Vec<_>>();
-    assert_eq!(rail, ["ws_1", "ws_2", "ws_3"]);
-    state.handle_input_bytes(&[0x02]);
-    state.handle_input_bytes(b"w");
-    state.handle_input_bytes(b"\x1b[B");
-    assert_eq!(
-        state.navigate_workspace_id,
-        state.navigation_target(&ClientEndpointId::Local, "ws_2")
-    );
+        state.sidebar_collapsed = true;
+        state.compose(106, 30).expect("collapsed sidebar");
+        let rail = state
+            .hits
+            .workspaces
+            .iter()
+            .map(|hit| hit.workspace_id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(rail, ["ws_1", "ws_2", "ws_3"], "{child}");
+        state.handle_input_bytes(&[0x02]);
+        state.handle_input_bytes(b"w");
+        state.handle_input_bytes(b"\x1b[B");
+        assert_eq!(
+            state.navigate_workspace_id,
+            state.navigation_target(&ClientEndpointId::Local, "ws_2"),
+            "{child}"
+        );
+    }
 }
 
 #[test]
@@ -866,6 +871,36 @@ fn a_header_press_that_drags_does_not_fold() {
 
     click(&mut state, header);
     assert!(state.collapsed_groups.contains("group:A"));
+}
+
+#[test]
+fn a_popup_ends_a_header_press() {
+    let mut state = grouped_state(named_spaces(&["A/one", "A/two", "plain"]));
+    state.compose(106, 30).expect("composed frame");
+    let header = header_point(&state, "A");
+    let popup = |state: &mut ClientShellState| {
+        state.set_pane_surface(surface_with_popup());
+        state.set_pane_surface(surface());
+        state.compose(106, 30).expect("composed frame");
+    };
+
+    // Pressed, a popup opens and closes, released on the header: no fold.
+    mouse(&mut state, MouseEventKind::Down(MouseButton::Left), header);
+    popup(&mut state);
+    assert!(state.group_header_press.is_none());
+    let release = mouse(&mut state, MouseEventKind::Up(MouseButton::Left), header);
+    assert!(release.actions.is_empty());
+    assert!(state.collapsed_groups.is_empty());
+
+    // Dragged to the end after the popup and released: no group drag, nothing sent.
+    mouse(&mut state, MouseEventKind::Down(MouseButton::Left), header);
+    popup(&mut state);
+    let end = (header.0 + 1, space_point(&state, "ws_3").1 + 1);
+    let mut actions = mouse(&mut state, MouseEventKind::Drag(MouseButton::Left), end).actions;
+    assert!(state.chrome_drag.is_none());
+    actions.extend(mouse(&mut state, MouseEventKind::Up(MouseButton::Left), end).actions);
+    assert!(actions.is_empty());
+    assert!(state.collapsed_groups.is_empty());
 }
 
 #[test]
@@ -1229,6 +1264,40 @@ fn moving_to_a_hidden_member_that_fits_in_view_does_not_scroll() {
 }
 
 #[test]
+fn a_tiny_sidebar_reveals_the_space_before_its_header() {
+    // A 2-line body; `one` is two lines tall (its branch), so ` ▾ A` and `one` don't fit together.
+    let mut projected = named_spaces(&["p0", "p1", "p2", "p3", "A/one"]);
+    projected.workspaces[4].branch = Some("main".into());
+    let mut state = grouped_state(projected);
+    state.compose(106, 10).expect("composed frame");
+    assert_eq!(state.hits.workspace_body.height, 2);
+    navigate(&mut state);
+    state.handle_input_bytes(b"\x1b[A");
+    assert!(preview_is(&state, "ws_5"));
+    state.compose(106, 10).expect("composed frame");
+    assert!(has_hit(&state, "ws_5"), "one is drawn");
+
+    // A top-level space right below a folded group's header doesn't bring that header along,
+    // even with room for both (2- and 3-line bodies): it goes to the top, as upstream's reveal.
+    let mut projected = named_spaces(&["p0", "A/a1", "A/a2", "p1", "p2", "p3", "p4", "p5"]);
+    projected.workspaces[3].branch = Some("main".into());
+    for rows in [10, 11] {
+        let mut state = grouped_state(focused_on(projected.clone(), "ws_8"));
+        state.collapsed_groups.insert("group:A".into());
+        state.compose(106, rows).expect("composed frame");
+        assert_eq!(state.hits.workspace_body.height, rows - 8);
+        navigate(&mut state);
+        for workspace_id in ["ws_1", "ws_2", "ws_3", "ws_4"] {
+            state.handle_input_bytes(b"\x1b[B");
+            assert!(preview_is(&state, workspace_id));
+            state.compose(106, rows).expect("composed frame");
+            assert!(has_hit(&state, workspace_id), "{workspace_id} is drawn");
+        }
+        assert!(state.hits.group_headers.is_empty(), "{rows} rows");
+    }
+}
+
+#[test]
 fn group_headers_get_no_hits_without_mouse_capture() {
     let mut state = grouped_state(named_spaces(&["A/one", "plain"]));
     state.config.mouse_capture = false;
@@ -1418,16 +1487,21 @@ fn open_group_rename(state: &mut ClientShellState, group: &str) {
     assert!(choose(state, "Rename group...").actions.is_empty());
 }
 
-/// Replaces the rename box's text with `text` and presses Enter; the renames sent, as
-/// `(workspace id, new name)`.
-fn submit_rename(state: &mut ClientShellState, text: &str) -> Vec<(String, String)> {
+/// Replaces the rename box's text with `text` and presses Enter.
+fn save_rename_box(state: &mut ClientShellState, text: &str) -> ClientShellInput {
     state.handle_input_bytes(&[0x15]);
     if !text.is_empty() {
         state.handle_input_bytes(text.as_bytes());
     }
     let save = state.handle_input_bytes(b"\r");
     assert!(state.overlay.is_none(), "Enter closes the rename box");
-    save.actions
+    save
+}
+
+/// `save_rename_box`; the renames sent (and nothing else), as `(workspace id, new name)`.
+fn submit_rename(state: &mut ClientShellState, text: &str) -> Vec<(String, String)> {
+    save_rename_box(state, text)
+        .actions
         .iter()
         .map(|action| {
             let ClientShellAction::Endpoint { request, .. } = action else {
@@ -1712,14 +1786,25 @@ fn renaming_a_group_onto_another_merges_them() {
     state.collapsed_groups.insert("group:B".into());
 
     open_group_rename(&mut state, "A");
-    let renames = submit_rename(&mut state, "B");
-    assert_eq!(renames, renamed(&[("ws_1", "B/one"), ("ws_4", "B/three")]));
+    let save = save_rename_box(&mut state, "B");
+    // The merged group is gathered behind its first space after the renames.
+    assert_eq!(
+        sent(&save.actions),
+        [
+            "rename ws_1 B/one",
+            "rename ws_4 B/three",
+            "move ws_3,ws_4 before ws_2"
+        ]
+    );
     assert_eq!(
         state.collapsed_groups,
         HashSet::from(["group:B".to_owned()])
     );
 
-    apply_renames(&mut state, &renames);
+    apply_sent(&mut state, &sent_methods(&save.actions));
+    let (drawn, server) = drawn_and_server_order(&state);
+    assert_eq!(drawn, ["ws_1", "ws_3", "ws_4", "ws_2"]);
+    assert_eq!(drawn, server);
     assert_eq!(
         body_lines(&mut state, 3),
         [
@@ -2356,22 +2441,116 @@ fn joining_groups_keeps_the_server_order_the_same_as_the_drawing() {
     );
 }
 
+/// Chooses "No group" for `workspace_id`, applies what that sent, and checks that the server
+/// order then matches the drawing; the drawn order.
+fn leave_and_apply(state: &mut ClientShellState, workspace_id: &str) -> Vec<String> {
+    open_move_menu(state, workspace_id);
+    let outcome = choose(state, "No group");
+    apply_sent(state, &sent_methods(&outcome.actions));
+    let (drawn, server) = drawn_and_server_order(state);
+    assert_eq!(drawn, server, "the server order matches the drawing");
+    drawn
+}
+
 #[test]
-fn no_group_renames_the_space_to_its_short_name_and_leaves_it_in_place() {
+fn no_group_puts_the_space_right_after_its_group() {
+    // Drawn ` ▾ A` one two, plain: `two` (last in the server order) shows right after A.
     let mut state = grouped_state(named_spaces(&["A/one", "plain", "A / two"]));
-    assert_eq!(move_to(&mut state, "ws_3", "No group"), ["rename ws_3 two"]);
+    assert_eq!(
+        move_to(&mut state, "ws_3", "No group"),
+        ["rename ws_3 two", "move ws_3 before ws_2"]
+    );
+    assert_eq!(
+        leave_and_apply(&mut state, "ws_3"),
+        ["ws_1", "ws_3", "ws_2"]
+    );
+    let icon = icon(&state);
+    assert_eq!(
+        body_lines(&mut state, 3),
+        [
+            " ▾ A".to_owned(),
+            format!("   {icon} one"),
+            format!(" {icon} two"),
+        ]
+    );
+
     // The group's first space leaves: the group's other spaces are gathered behind it, so the
-    // group stays drawn right below it instead of jumping past `plain`.
+    // group stays where it is drawn, and the space goes right after them.
+    let mut state = grouped_state(named_spaces(&["A/one", "plain", "A / two"]));
     open_move_menu(&mut state, "ws_1");
     let outcome = choose(&mut state, "No group");
     assert_eq!(
         sent(&outcome.actions),
-        ["rename ws_1 one", "move ws_3 before ws_2"]
+        [
+            "rename ws_1 one",
+            "move ws_3 before ws_2",
+            "move ws_1 before ws_2"
+        ]
     );
-    apply_sent(&mut state, &sent_methods(&outcome.actions));
+
+    // A middle member of a group in sync: after the group's last member.
+    let mut state = grouped_state(named_spaces(&["A/one", "A/two", "A/three", "plain"]));
+    assert_eq!(
+        leave_and_apply(&mut state, "ws_2"),
+        ["ws_1", "ws_3", "ws_2", "ws_4"]
+    );
+
+    // A scattered group's last member (as the new-space box leaves it): right after the group,
+    // not below the spaces between.
+    let mut state = grouped_state(named_spaces(&["G/a", "x", "y", "G/new"]));
+    assert_eq!(
+        leave_and_apply(&mut state, "ws_4"),
+        ["ws_1", "ws_4", "ws_2", "ws_3"]
+    );
+
+    // A group of one stays where it is.
+    let mut state = grouped_state(named_spaces(&["plain", "A/one", "other"]));
+    assert_eq!(move_to(&mut state, "ws_2", "No group"), ["rename ws_2 one"]);
+}
+
+#[test]
+fn leaving_a_group_by_the_rename_box_puts_the_space_right_after_its_group() {
+    // Its short name: as "No group".
+    let mut state = grouped_state(named_spaces(&["G/a", "x", "y", "G/new"]));
+    let save = rename_space_input(&mut state, "ws_4", "new");
+    assert_eq!(
+        sent(&save.actions),
+        ["rename ws_4 new", "move ws_4 before ws_2"]
+    );
+    apply_sent(&mut state, &sent_methods(&save.actions));
+    let (drawn, server) = drawn_and_server_order(&state);
+    assert_eq!(drawn, ["ws_1", "ws_4", "ws_2", "ws_3"]);
+    assert_eq!(drawn, server);
+
+    // A new group: drawn right after the group it left.
+    let mut state = grouped_state(named_spaces(&["A / c0", "other1", "A/b2"]));
+    let save = rename_space_input(&mut state, "ws_3", "New/x");
+    assert_eq!(
+        sent(&save.actions),
+        ["rename ws_3 New/x", "move ws_3 before ws_2"]
+    );
+    apply_sent(&mut state, &sent_methods(&save.actions));
     let (drawn, server) = drawn_and_server_order(&state);
     assert_eq!(drawn, ["ws_1", "ws_3", "ws_2"]);
     assert_eq!(drawn, server);
+    let icon = icon(&state);
+    assert_eq!(
+        body_lines(&mut state, 5),
+        [
+            " ▾ A".to_owned(),
+            format!("   {icon} c0"),
+            " ▾ New".to_owned(),
+            format!("   {icon} x"),
+            format!(" {icon} other1"),
+        ]
+    );
+
+    // "New group..." in the space's menu saves as the rename box does.
+    let mut state = grouped_state(named_spaces(&["A / c0", "other1", "A/b2"]));
+    assert_eq!(
+        new_group(&mut state, "ws_3", b"New"),
+        ["rename ws_3 New/b2", "move ws_3 before ws_2"]
+    );
 }
 
 #[test]
@@ -2390,7 +2569,9 @@ fn new_group_opens_the_rename_box_with_the_cursor_before_the_short_name() {
                 Some(ClientShellOverlay::Rename(ClientRenameOverlay {
                     title: "rename workspace",
                     ref input,
-                    target: ClientRenameTarget::SpaceNewGroup { workspace_id: ref id },
+                    target: ClientRenameTarget::SpaceName(SpaceName::NewGroup {
+                        workspace_id: ref id
+                    }),
                 })) if input.as_str() == prefill && id == workspace_id
             ),
             "{workspace_id}"
@@ -2420,15 +2601,19 @@ fn new_group_opens_the_rename_box_with_the_cursor_before_the_short_name() {
 /// Opens `workspace_id`'s rename box from its menu, replaces the text with `text` and presses
 /// Enter; what that sent.
 fn rename_space(state: &mut ClientShellState, workspace_id: &str, text: &str) -> Vec<String> {
+    sent(&rename_space_input(state, workspace_id, text).actions)
+}
+
+fn rename_space_input(
+    state: &mut ClientShellState,
+    workspace_id: &str,
+    text: &str,
+) -> ClientShellInput {
     state.compose(106, 30).expect("composed frame");
     let point = space_point(state, workspace_id);
     right_click(state, point);
     choose(state, "Rename");
-    state.handle_input_bytes(&[0x15]);
-    state.handle_input_bytes(text.as_bytes());
-    let save = state.handle_input_bytes(b"\r");
-    assert!(state.overlay.is_none(), "Enter closes the rename box");
-    sent(&save.actions)
+    save_rename_box(state, text)
 }
 
 #[test]
@@ -2453,7 +2638,8 @@ fn renaming_a_space_into_an_existing_group_moves_it_after_the_groups_last_member
             "move ws_2 before ws_3"
         ]
     );
-    // A new group, the same group, leaving one, not grouped: only the rename.
+    // A new group from no group, the same group, leaving a group of one, not grouped: only the
+    // rename.
     for (workspace_id, text) in [
         ("ws_2", "Z/x"),
         ("ws_3", "B/renamed"),
@@ -2466,16 +2652,24 @@ fn renaming_a_space_into_an_existing_group_moves_it_after_the_groups_last_member
             "{workspace_id} {text:?}"
         );
     }
-    // Leaving A as its first space (into another case's group): A's other space is gathered
-    // behind it, so A doesn't jump.
+    // Leaving A as its first space (for a new group, another case's): A is gathered behind it
+    // first, so A doesn't jump, then it goes right after A.
     assert_eq!(
         rename_space(&mut state, "ws_1", "a/one"),
-        ["rename ws_1 a/one", "move ws_4 before ws_2"]
+        [
+            "rename ws_1 a/one",
+            "move ws_4 before ws_2",
+            "move ws_1 before ws_2"
+        ]
     );
     // Or for no group: the same.
     assert_eq!(
         rename_space(&mut state, "ws_1", "one"),
-        ["rename ws_1 one", "move ws_4 before ws_2"]
+        [
+            "rename ws_1 one",
+            "move ws_4 before ws_2",
+            "move ws_1 before ws_2"
+        ]
     );
     // From another group, and a worktree parent with its block.
     assert_eq!(
@@ -2722,13 +2916,14 @@ fn no_group_lets_the_user_name_a_space_whose_short_name_has_a_slash() {
         ["rename ws_1 app/xz", "move ws_1 before ws_4"]
     );
 
+    // Out of Web: right after Web.
     open_move_menu(&mut state, "ws_1");
     choose(&mut state, "No group");
     state.handle_input_bytes(&[0x15]);
     state.handle_input_bytes(b"x");
     assert_eq!(
         sent(&state.handle_input_bytes(b"\r").actions),
-        ["rename ws_1 x"]
+        ["rename ws_1 x", "move ws_1 before ws_3"]
     );
     // A short name without a slash is renamed right away.
     assert_eq!(move_to(&mut state, "ws_2", "No group"), ["rename ws_2 two"]);
@@ -2841,12 +3036,11 @@ fn group_target(state: &ClientShellState) -> Option<&GroupDropTarget> {
     drag.target.as_ref()
 }
 
-fn gap(group: Option<&str>, before: Option<&str>, row: u16, beside: bool) -> GroupDropTarget {
+fn gap(group: Option<&str>, before: Option<&str>, row: u16) -> GroupDropTarget {
     GroupDropTarget::Gap {
         group: group.map(str::to_owned),
         before: before.map(str::to_owned),
         row,
-        beside,
     }
 }
 
@@ -2908,7 +3102,7 @@ fn a_space_on_its_own_groups_header_goes_to_the_groups_first_place() {
     drag_space(&mut state, "ws_1", top);
     assert_eq!(
         group_target(&state),
-        Some(&gap(Some("A"), Some("ws_1"), top, true))
+        Some(&gap(Some("A"), Some("ws_1"), top))
     );
     assert_eq!(drop_space(&mut state, "ws_1", top), Vec::<String>::new());
     // For the second member it is a reorder to the top of the group.
@@ -2924,7 +3118,7 @@ fn dropping_a_space_between_a_groups_members_joins_it_there() {
     drag_space(&mut state, "ws_3", top + 5);
     assert_eq!(
         group_target(&state),
-        Some(&gap(Some("B"), Some("ws_5"), top + 5, false))
+        Some(&gap(Some("B"), Some("ws_5"), top + 5))
     );
     let point = (space_point(&state, "ws_3").0 + 1, top + 5);
     let outcome = release(&mut state, point);
@@ -2966,7 +3160,7 @@ fn dropping_a_space_between_a_header_and_its_first_member_joins_as_first() {
     drag_space(&mut state, "ws_1", header + 1);
     assert_eq!(
         group_target(&state),
-        Some(&gap(Some("B"), Some("ws_4"), header, false))
+        Some(&gap(Some("B"), Some("ws_4"), header))
     );
     let point = (space_point(&state, "ws_1").0 + 1, header + 1);
     let outcome = release(&mut state, point);
@@ -3018,7 +3212,7 @@ fn dropping_a_grouped_space_between_top_level_rows_leaves_its_group() {
     let point = drag_space(&mut state, "ws_5", top + 3);
     assert_eq!(
         group_target(&state),
-        Some(&gap(None, Some("ws_4"), top + 3, false))
+        Some(&gap(None, Some("ws_4"), top + 3))
     );
     let outcome = release(&mut state, point);
     assert_eq!(
@@ -3035,7 +3229,7 @@ fn dropping_a_grouped_space_between_top_level_rows_leaves_its_group() {
 fn dropping_a_space_at_the_end_puts_it_last_at_the_top_level() {
     let (mut state, top) = two_groups();
     drag_space(&mut state, "ws_1", top + 8);
-    assert_eq!(group_target(&state), Some(&gap(None, None, top + 8, false)));
+    assert_eq!(group_target(&state), Some(&gap(None, None, top + 8)));
     assert_eq!(
         drop_space(&mut state, "ws_1", top + 8),
         ["rename ws_1 one", "move ws_1 before end"]
@@ -3070,22 +3264,117 @@ fn an_ungrouped_space_between_top_level_rows_only_moves() {
 }
 
 #[test]
-fn a_leaving_space_whose_short_name_has_a_slash_moves_and_asks_for_its_name() {
+fn a_leaving_space_whose_short_name_has_a_slash_asks_for_its_name_before_anything_is_sent() {
+    // ` ▾ Web` app/x two, then plain; `app/x` dragged to the end (top + 4) leaves Web.
     let mut state = grouped_state(named_spaces(&["Web/app/x", "Web/two", "plain"]));
+    let before = drawn_and_server_order(&state);
     let top = list_top(&mut state);
     assert_eq!(
         drop_space(&mut state, "ws_1", top + 4),
-        ["move ws_1 before end"]
+        Vec::<String>::new()
     );
     assert!(matches!(
         state.overlay,
         Some(ClientShellOverlay::Rename(ClientRenameOverlay {
             title: "rename workspace",
             ref input,
-            target: ClientRenameTarget::Workspace { ref workspace_id },
+            target: ClientRenameTarget::SpaceName(SpaceName::Dropped {
+                ref workspace_id,
+                before: None
+            }),
         })) if input.as_str() == "app/x" && workspace_id == "ws_1"
     ));
-    key(&mut state, KeyCode::Esc);
+    // Esc: nothing at all.
+    assert!(key(&mut state, KeyCode::Esc).actions.is_empty());
+    assert!(state.overlay.is_none());
+    assert_eq!(drawn_and_server_order(&state), before);
+
+    // Saved: the rename, then the move to the drop's place.
+    assert_eq!(
+        drop_space(&mut state, "ws_1", top + 4),
+        Vec::<String>::new()
+    );
+    let save = save_rename_box(&mut state, "x");
+    assert_eq!(
+        sent(&save.actions),
+        ["rename ws_1 x", "move ws_1 before end"]
+    );
+    apply_sent(&mut state, &sent_methods(&save.actions));
+    let (drawn, server) = drawn_and_server_order(&state);
+    assert_eq!(drawn, ["ws_2", "ws_3", "ws_1"]);
+    assert_eq!(drawn, server);
+    let icon = icon(&state);
+    assert_eq!(
+        body_lines(&mut state, 4),
+        [
+            " ▾ Web".to_owned(),
+            format!("   {icon} two"),
+            format!(" {icon} plain"),
+            format!(" {icon} x"),
+        ]
+    );
+
+    // A new group's name: a top-level item too, at the drop's place.
+    let mut state = grouped_state(named_spaces(&["Web/app/x", "Web/two", "plain"]));
+    let top = list_top(&mut state);
+    assert_eq!(
+        drop_space(&mut state, "ws_1", top + 4),
+        Vec::<String>::new()
+    );
+    let save = save_rename_box(&mut state, "Tools/x");
+    assert_eq!(
+        sent(&save.actions),
+        ["rename ws_1 Tools/x", "move ws_1 before end"]
+    );
+    apply_sent(&mut state, &sent_methods(&save.actions));
+    let (drawn, server) = drawn_and_server_order(&state);
+    assert_eq!(drawn, ["ws_2", "ws_3", "ws_1"]);
+    assert_eq!(drawn, server);
+    assert_eq!(
+        body_lines(&mut state, 5),
+        [
+            " ▾ Web".to_owned(),
+            format!("   {icon} two"),
+            format!(" {icon} plain"),
+            " ▾ Tools".to_owned(),
+            format!("   {icon} x"),
+        ]
+    );
+
+    // An empty name sends nothing; a name in a group that has spaces joins it at its end, as the
+    // rename box does.
+    let mut state = grouped_state(named_spaces(&["Web/app/x", "Web/two", "plain", "B/b"]));
+    let top = list_top(&mut state);
+    drop_space(&mut state, "ws_1", top + 3);
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::Rename(ClientRenameOverlay {
+            target: ClientRenameTarget::SpaceName(SpaceName::Dropped {
+                before: Some(ref before),
+                ..
+            }),
+            ..
+        })) if before == "ws_4"
+    ));
+    assert!(save_rename_box(&mut state, "").actions.is_empty());
+    drop_space(&mut state, "ws_1", top + 3);
+    assert_eq!(
+        sent(&save_rename_box(&mut state, "B/x").actions),
+        ["rename ws_1 B/x", "move ws_1 before end"]
+    );
+    // The drop's place gone by the time it is saved: right after the group it left.
+    drop_space(&mut state, "ws_1", top + 3);
+    let mut projected = (**state.snapshot.as_ref().expect("snapshot")).clone();
+    projected.workspaces.pop();
+    projected.revision += 1;
+    let mut projected_surface = surface();
+    projected_surface.projection_revision = projected.revision;
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(projected_surface);
+    assert_eq!(
+        sent(&save_rename_box(&mut state, "x").actions),
+        ["rename ws_1 x", "move ws_1 before ws_3"]
+    );
     // Joining another group keeps the whole short name.
     let mut state = grouped_state(named_spaces(&["Web/app/x", "B/two"]));
     let top = list_top(&mut state);
@@ -3127,7 +3416,7 @@ fn a_worktree_parent_dragged_into_a_group_carries_its_children() {
     drag_space(&mut state, "ws_5", top + 3);
     assert_eq!(
         group_target(&state),
-        Some(&gap(None, Some("ws_3"), top + 2, false))
+        Some(&gap(None, Some("ws_3"), top + 2))
     );
 }
 
@@ -3177,7 +3466,7 @@ fn a_before_inside_the_dragged_block_gives_way_to_the_next_space() {
     let point = drag_space(&mut state, "ws_3", top - 1);
     assert_eq!(
         group_target(&state),
-        Some(&gap(None, Some("ws_1"), top - 1, false))
+        Some(&gap(None, Some("ws_1"), top - 1))
     );
     let outcome = release(&mut state, point);
     assert_eq!(
@@ -3206,7 +3495,7 @@ fn dragging_a_header_moves_its_whole_group() {
     let (mut state, top) = group_with_worktree();
     assert_eq!(header_point(&state, "B").1, top + 5);
     let point = drag_header(&mut state, "A", top + 7);
-    assert_eq!(group_target(&state), Some(&gap(None, None, top + 7, false)));
+    assert_eq!(group_target(&state), Some(&gap(None, None, top + 7)));
     let outcome = release(&mut state, point);
     assert_eq!(sent(&outcome.actions), ["move ws_1,ws_3,ws_4 before end"]);
     assert!(
@@ -3348,6 +3637,47 @@ fn the_drop_target_is_drawn_inside_a_group_across_the_list_or_on_a_header() {
 }
 
 #[test]
+fn a_group_drag_draws_nothing_over_the_multi_machine_sidebar() {
+    use crate::client::endpoint::{ClientEndpointStatus, ProfileId, SavedSshEndpoint};
+
+    let (mut state, top) = two_groups();
+    drag_space(&mut state, "ws_3", top + 5);
+    assert!(list_line(&mut state, top + 5).starts_with("  ──"));
+
+    // A machine comes online mid-drag: the sidebar is the multi-machine one now.
+    let profile = SavedSshEndpoint {
+        id: ProfileId::parse("0123456789abcdef0123456789abcdef").expect("profile id"),
+        label: "Build".into(),
+        target: "dev@build.example".into(),
+        session: "agents".into(),
+        enabled: true,
+    };
+    let endpoint_id = ClientEndpointId::Ssh(profile.id.clone());
+    state.set_endpoint_catalog(&[profile]);
+    state.set_endpoint_status(&endpoint_id, ClientEndpointStatus::Online);
+    let mut remote = snapshot();
+    remote.boot_id = "remote-boot".into();
+    state.set_endpoint_snapshot(&endpoint_id, Box::new(remote));
+    assert!(matches!(
+        state.chrome_drag,
+        Some(ClientChromeDrag::SpaceGroups(_))
+    ));
+    let frame = state.compose(106, 30).expect("multi-machine sidebar");
+    assert!(!state.hits.machines.is_empty());
+    // No line on the space list (nor on the blank line above it, where a first gap's goes).
+    let body = state.hits.workspace_body;
+    let rows = frame_rows(&frame);
+    for row in body.y.saturating_sub(1)..body.bottom() {
+        let line = rows[usize::from(row)]
+            .chars()
+            .skip(usize::from(body.x))
+            .take(usize::from(body.width))
+            .collect::<String>();
+        assert!(!line.contains("──"), "row {row}: {line:?}");
+    }
+}
+
+#[test]
 fn a_dragged_header_gets_the_dragged_background() {
     let (mut state, top) = two_groups();
     drag_header(&mut state, "A", top + 3);
@@ -3450,7 +3780,7 @@ fn a_folded_group_offers_its_header_but_no_gaps_between_members() {
     drag_space(&mut state, "ws_2", top);
     assert_eq!(
         group_target(&state),
-        Some(&gap(Some("A"), Some("ws_1"), top, false))
+        Some(&gap(Some("A"), Some("ws_1"), top))
     );
     assert_eq!(
         sent(&release(&mut state, (0, 0)).actions),
@@ -3460,7 +3790,7 @@ fn a_folded_group_offers_its_header_but_no_gaps_between_members() {
     drag_space(&mut state, "ws_2", top - 1);
     assert_eq!(
         group_target(&state),
-        Some(&gap(None, Some("ws_1"), top - 1, false))
+        Some(&gap(None, Some("ws_1"), top - 1))
     );
     release(&mut state, (0, 0));
     // Another space on the folded header joins it.
@@ -3488,7 +3818,7 @@ fn a_gap_before_a_worktree_block_goes_before_its_first_space_in_server_order() {
     let point = drag_space(&mut state, "ws_4", top - 1);
     assert_eq!(
         group_target(&state),
-        Some(&gap(None, Some("ws_1"), top - 1, false))
+        Some(&gap(None, Some("ws_1"), top - 1))
     );
     let outcome = release(&mut state, point);
     assert_eq!(sent(&outcome.actions), ["move ws_4 before ws_1"]);
@@ -3504,7 +3834,7 @@ fn a_grouped_space_dropped_between_two_ungrouped_rows_leaves_its_group_there() {
     let point = drag_space(&mut state, "ws_1", top + 3);
     assert_eq!(
         group_target(&state),
-        Some(&gap(None, Some("ws_4"), top + 3, false))
+        Some(&gap(None, Some("ws_4"), top + 3))
     );
     let outcome = release(&mut state, point);
     assert_eq!(
@@ -3540,10 +3870,11 @@ fn moving_the_first_space_of_a_scattered_group_gathers_the_group_where_it_is_dra
     // `B/b1, x, B/a1, y` is drawn ` ▾ B` b1 a1, x, y: B sits at b1's place.
     let mut state = grouped_state(named_spaces(&["B/b1", "x", "B/a1", "y"]));
     let top = list_top(&mut state);
-    // Right after itself: nothing, not even the gathering.
+    // Right after itself: no rename and no move of its own, only the group gathered where it is
+    // drawn (harmless: the drawing stays the same).
     assert_eq!(
         drop_space(&mut state, "ws_1", top + 1),
-        Vec::<String>::new()
+        ["move ws_3 before ws_2"]
     );
     // b1 to just below the group: B stays where it is, b1 right below it.
     drop_and_apply(
@@ -3629,10 +3960,7 @@ fn a_header_drops_between_folded_groups_on_their_header_lines() {
     let (mut state, top) = folded_groups();
     // On A's line: the gap after A, before B.
     drag_header(&mut state, "D", top);
-    assert_eq!(
-        group_target(&state),
-        Some(&gap(None, Some("ws_2"), top, false))
-    );
+    assert_eq!(group_target(&state), Some(&gap(None, Some("ws_2"), top)));
     assert_eq!(drop_header(&mut state, "D", top), ["move ws_4 before ws_2"]);
     assert_eq!(
         drop_header(&mut state, "D", top + 1),
@@ -3658,7 +3986,7 @@ fn a_drop_whose_next_space_has_gone_sends_nothing() {
     drag_space(&mut state, "ws_3", top + 5);
     assert_eq!(
         group_target(&state),
-        Some(&gap(Some("B"), Some("ws_5"), top + 5, false))
+        Some(&gap(Some("B"), Some("ws_5"), top + 5))
     );
     // `four` closes before the release.
     let mut projected = (**state.snapshot.as_ref().expect("snapshot")).clone();
@@ -3708,10 +4036,7 @@ fn a_scrolled_list_offers_the_gap_before_the_next_row_below_the_last_row_shown()
     state.compose(106, height).expect("composed frame");
     let from = space_point(&state, "ws_2");
     drag_to(&mut state, from, (from.0 + 1, spare));
-    assert_eq!(
-        group_target(&state),
-        Some(&gap(None, Some(&next), spare, false))
-    );
+    assert_eq!(group_target(&state), Some(&gap(None, Some(&next), spare)));
     assert_eq!(
         sent(&release(&mut state, (0, spare)).actions),
         [format!("move ws_2 before {next}")]
@@ -3758,7 +4083,184 @@ fn a_folded_groups_shown_member_has_no_gap_before_it() {
     drag_space(&mut state, "ws_3", top + 1);
     assert_eq!(
         group_target(&state),
-        Some(&gap(None, Some("ws_3"), top + 2, true))
+        Some(&gap(None, Some("ws_3"), top + 2))
     );
     assert!(release(&mut state, (0, 0)).actions.is_empty());
+}
+
+/// `Web/Miniteam`, `plain`, `Web/two`: drawn ` ▾ Web` Miniteam two, plain.
+fn web_group() -> ClientShellState {
+    grouped_state(named_spaces(&["Web/Miniteam", "plain", "Web/two"]))
+}
+
+#[test]
+fn a_grouped_space_keeps_its_full_name_outside_the_sidebar() {
+    // The rename box.
+    let mut state = web_group();
+    state.compose(106, 30).expect("composed frame");
+    let point = space_point(&state, "ws_1");
+    right_click(&mut state, point);
+    choose(&mut state, "Rename");
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::Rename(ClientRenameOverlay { ref input, .. }))
+            if input.as_str() == "Web/Miniteam"
+    ));
+    key(&mut state, KeyCode::Esc);
+
+    // Goto: full names, in server order.
+    state.open_navigator_overlay();
+    let Some(ClientShellOverlay::Navigator(navigator)) = state.overlay.as_ref() else {
+        panic!("expected the navigator");
+    };
+    let spaces =
+        render::client_navigator_rows(&state.endpoints, &state.active_endpoint_id, navigator)
+            .into_iter()
+            .filter(|row| matches!(row.target, ClientNavigatorTarget::Workspace { .. }))
+            .map(|row| row.label)
+            .collect::<Vec<_>>();
+    assert_eq!(spaces, ["Web/Miniteam", "plain", "Web/two"]);
+    key(&mut state, KeyCode::Esc);
+
+    // The agents panel.
+    let mut projected = named_spaces(&["Web/Miniteam", "plain", "Web/two"]);
+    projected.agents.push(ClientShellAgent {
+        pane_id: "pane_1".into(),
+        workspace_id: "ws_1".into(),
+        tab_id: "tab_1".into(),
+        name: Some("pi".into()),
+        display_agent: None,
+        agent: Some("pi".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status: AgentStatus::Idle,
+        state_change_seq: 1,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused: true,
+    });
+    let mut state = grouped_state(projected);
+    let frame = state.compose(106, 30).expect("composed frame");
+    let agent = state.hits.agents.first().expect("agent row").0;
+    let line = frame_rows(&frame)[usize::from(agent.y)]
+        .chars()
+        .skip(usize::from(agent.x))
+        .take(usize::from(agent.width))
+        .collect::<String>();
+    assert!(line.contains("Web/Miniteam"), "{line:?}");
+}
+
+#[test]
+fn the_mobile_switcher_lists_grouped_spaces_flat_in_the_grouped_order() {
+    let mut state = web_group();
+    state.compose(44, 20).expect("mobile header");
+    assert!(state.mobile_layout_active());
+    let switch = state.hits.mobile_switch;
+    click(&mut state, (switch.x, switch.y));
+    let frame = state.compose(44, 20).expect("mobile switcher");
+    let mut spaces = state
+        .hits
+        .mobile_targets
+        .iter()
+        .filter_map(|(rect, target)| match target {
+            ClientMobileTarget::Workspace { workspace_id, .. } => Some((rect.y, workspace_id)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    spaces.sort();
+    let spaces = spaces
+        .into_iter()
+        .map(|(_, workspace_id)| workspace_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(spaces, ["ws_1", "ws_3", "ws_2"]);
+    let text = frame_rows(&frame).join("\n");
+    assert!(text.contains("Web/Miniteam") && text.contains("Web/two"));
+    assert!(!text.contains("▾ Web"));
+    assert!(state.hits.group_headers.is_empty());
+}
+
+#[test]
+fn the_multi_machine_sidebar_lists_grouped_spaces_flat_in_the_grouped_order() {
+    use crate::client::endpoint::{ClientEndpointStatus, ProfileId, SavedSshEndpoint};
+
+    let mut state = web_group();
+    let profile = SavedSshEndpoint {
+        id: ProfileId::parse("0123456789abcdef0123456789abcdef").expect("profile id"),
+        label: "Build".into(),
+        target: "dev@build.example".into(),
+        session: "agents".into(),
+        enabled: true,
+    };
+    let endpoint_id = ClientEndpointId::Ssh(profile.id.clone());
+    state.set_endpoint_catalog(&[profile]);
+    state.set_endpoint_status(&endpoint_id, ClientEndpointStatus::Online);
+    let mut remote = snapshot();
+    remote.boot_id = "remote-boot".into();
+    state.set_endpoint_snapshot(&endpoint_id, Box::new(remote));
+
+    let frame = state.compose(106, 30).expect("multi-machine sidebar");
+    let local = state
+        .hits
+        .workspaces
+        .iter()
+        .filter(|hit| hit.endpoint_id.is_local())
+        .map(|hit| hit.workspace_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(local, ["ws_1", "ws_3", "ws_2"]);
+    assert!(state.hits.group_headers.is_empty());
+    let text = frame_rows(&frame).join("\n");
+    assert!(text.contains("Web/Miniteam") && text.contains("Web/two"));
+    assert!(!text.contains("▾ Web"));
+    // Navigate mode steps through the same list.
+    navigate(&mut state);
+    state.handle_input_bytes(b"\x1b[B");
+    assert!(preview_is(&state, "ws_3"));
+}
+
+#[test]
+fn closing_a_worktree_group_inside_a_named_group_works_as_upstream() {
+    // ` ▾ Web` p (a worktree parent, its child c1 under it), then plain.
+    let mut projected = named_spaces(&["Web/p", "plain", "c1"]);
+    in_worktree(&mut projected, 1, false);
+    in_worktree(&mut projected, 3, true);
+    for confirm_close in [false, true] {
+        let mut state = grouped_state(projected.clone());
+        state.config.confirm_close = confirm_close;
+        state.compose(106, 30).expect("composed frame");
+        assert!(header_right_above(&state, "Web", "ws_1"));
+        let point = space_point(&state, "ws_1");
+        right_click(&mut state, point);
+        let mut close = choose(&mut state, "Close group");
+        if confirm_close {
+            assert!(close.actions.is_empty());
+            assert!(matches!(
+                state.overlay.as_ref(),
+                Some(ClientShellOverlay::ConfirmClose(confirm))
+                    if confirm.title == "Close worktree group?"
+                        && confirm.close_group
+                        && confirm.detail.starts_with("Web/p — 2 workspaces")
+            ));
+            close = state.handle_input_bytes(b"\r");
+        }
+        assert!(matches!(
+            close.actions.as_slice(),
+            [ClientShellAction::Endpoint { request, .. }]
+                if matches!(&request.method, crate::api::schema::Method::WorkspaceClose(params)
+                    if params.workspace_id == "ws_1" && params.close_group)
+        ));
+
+        // Its linked child closes alone.
+        let mut state = grouped_state(projected.clone());
+        state.config.confirm_close = false;
+        state.compose(106, 30).expect("composed frame");
+        let point = space_point(&state, "ws_3");
+        right_click(&mut state, point);
+        assert!(matches!(
+            choose(&mut state, "Close").actions.as_slice(),
+            [ClientShellAction::Endpoint { request, .. }]
+                if matches!(&request.method, crate::api::schema::Method::WorkspaceClose(params)
+                    if params.workspace_id == "ws_3" && !params.close_group)
+        ));
+    }
 }
