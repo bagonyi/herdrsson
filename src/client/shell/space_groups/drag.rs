@@ -17,7 +17,7 @@ pub(in crate::client::shell) struct GroupDrag {
 /// What a drag carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::client::shell) enum GroupDragSource {
-    /// A space, with the rest of its worktree block when it heads one (`moving_block`).
+    /// A space, with the rest of its worktree block when it heads one (`Blocks::block`).
     Space(String),
     /// A group's header: every space drawn in the group.
     Header(String),
@@ -30,12 +30,10 @@ pub(in crate::client::shell) enum GroupDropTarget {
     Header(String),
     /// A gap, its line drawn on `row`: between `group`'s members, or between top-level rows
     /// (`None`). `before` is the first space in server order of the row below it, None at the end.
-    /// `beside` marks a gap right next to what is dragged, in its own group: nothing changes.
     Gap {
         group: Option<String>,
         before: Option<String>,
         row: u16,
-        beside: bool,
     },
 }
 
@@ -57,8 +55,8 @@ impl GroupDrag {
     }
 }
 
-/// The group drag among the window's drags, for the sidebar to draw.
-pub(in crate::client::shell) fn group_drag(drag: Option<&ClientChromeDrag>) -> Option<&GroupDrag> {
+/// The group drag among the window's drags.
+fn group_drag(drag: Option<&ClientChromeDrag>) -> Option<&GroupDrag> {
     match drag {
         Some(ClientChromeDrag::SpaceGroups(drag)) => Some(drag),
         _ => None,
@@ -68,16 +66,13 @@ pub(in crate::client::shell) fn group_drag(drag: Option<&ClientChromeDrag>) -> O
 /// Draws what upstream's sidebar doesn't of a group drag, over the space list `body`: the dragged
 /// header's background, the header a space would join, and a gap's line between a group's members
 /// (from the member indent, so it reads "inside").
-pub(in crate::client::shell) fn render_group_drag(
+fn render_group_drag(
     buffer: &mut Buffer,
     body: Rect,
     headers: &[GroupHeaderHit],
-    drag: Option<&GroupDrag>,
+    drag: &GroupDrag,
     palette: &Palette,
 ) {
-    let Some(drag) = drag else {
-        return;
-    };
     let header = |group: &str| {
         headers
             .iter()
@@ -126,108 +121,47 @@ fn drop_background(palette: &Palette) -> ratatui::style::Color {
     }
 }
 
-/// What a drag needs to know of the full list (no folds): each block head's group and its block's
-/// first space in server order, and each group's first space in server order.
-struct Blocks<'a> {
-    heads: HashMap<&'a str, (Option<&'a str>, &'a str)>,
-    groups: HashMap<&'a str, &'a str>,
-}
-
-fn blocks<'a>(snapshot: &'a ClientShellSnapshot, entries: &[WorkspaceEntry]) -> Blocks<'a> {
-    let groups = block_groups(snapshot, entries);
-    // (head's index, the block's smallest index, its group)
-    let mut heads = Vec::<(usize, usize, Option<&str>)>::new();
-    let mut group_first = HashMap::<&str, usize>::new();
-    for ((entry, head), group) in entries
-        .iter()
-        .zip(block_heads(snapshot, entries))
-        .zip(groups)
-    {
-        if head {
-            heads.push((entry.index, entry.index, group));
-        } else if let Some((_, first, _)) = heads.last_mut() {
-            *first = (*first).min(entry.index);
-        }
-        if let Some(group) = group {
-            let first = group_first.entry(group).or_insert(entry.index);
-            *first = (*first).min(entry.index);
-        }
-    }
-    let id = |index: usize| {
-        snapshot
-            .workspaces
-            .get(index)
-            .map(|workspace| workspace.workspace_id.as_str())
-    };
-    Blocks {
-        heads: heads
-            .into_iter()
-            .filter_map(|(head, first, group)| Some((id(head)?, (group, id(first)?))))
-            .collect(),
-        groups: group_first
-            .into_iter()
-            .filter_map(|(group, first)| Some((group, id(first)?)))
-            .collect(),
-    }
-}
-
-/// What dropping space `workspace_id` on `target` sends, and a short name to ask the user to finish.
-/// Changing group renames the space: `<group>/<short name>` into a group, its short name at the
-/// top level. A short name with a `/` (`app/x`) would put it in another group, so it isn't sent
-/// but asked for. Then come the moves that put its block before the row below the gap
-/// (`group_moves`). Nothing at all when that row's space has gone since.
+/// What dropping space `workspace_id` on `target` sends. Changing group renames the space:
+/// `<group>/<short name>` into a group, its short name at the top level. Then come the moves that
+/// put its block before the row below the gap (`group_moves`). Nothing at all when that row's
+/// space has gone since. `Err` with the short name to ask the user to finish, and nothing sent
+/// yet, when it leaves its group with a `/` in that name (`app/x` would land in group `app`).
 fn space_drop(
     snapshot: &ClientShellSnapshot,
     workspace_id: &str,
     target: &GroupDropTarget,
-) -> (Vec<Method>, Option<String>) {
-    let entries = super::super::render::workspace_entries(snapshot, &HashSet::new());
+) -> Result<Vec<Method>, String> {
     let Some(workspace) = snapshot
         .workspaces
         .iter()
         .find(|workspace| workspace.workspace_id == workspace_id)
     else {
-        return Default::default();
+        return Ok(Vec::new());
     };
-    let own = drawn_group(
-        snapshot,
-        &entries,
-        &block_groups(snapshot, &entries),
-        workspace_id,
-    );
+    let own = Blocks::new(snapshot).group(workspace_id);
     let (group, before) = match target {
         GroupDropTarget::Header(group) if own != Some(group.as_str()) => {
-            return (join_group_methods(snapshot, workspace_id, group), None);
+            return Ok(join_group_methods(snapshot, workspace_id, group));
         }
-        GroupDropTarget::Gap {
-            group,
-            before,
-            beside: false,
-            ..
-        } => (group.as_deref(), before.as_deref()),
-        _ => return Default::default(),
+        GroupDropTarget::Gap { group, before, .. } => (group.as_deref(), before.as_deref()),
+        _ => return Ok(Vec::new()),
     };
     let Some(moves) = group_moves(snapshot, workspace_id, group, Place::Before(before)) else {
-        return Default::default();
-    };
-    let rename = |label: String| {
-        Method::WorkspaceRename(WorkspaceRenameParams {
-            workspace_id: workspace_id.to_owned(),
-            label,
-        })
+        return Ok(Vec::new());
     };
     let mut methods = Vec::new();
-    let mut ask = None;
     if group != own {
-        match (group, split_name(workspace)) {
-            (Some(group), _) => methods.push(rename(format!("{group}/{}", short_name(workspace)))),
-            (None, Some((_, short))) if short.contains('/') => ask = Some(short.to_owned()),
-            (None, Some((_, short))) => methods.push(rename(short.to_owned())),
-            (None, None) => {}
+        match group {
+            Some(group) => methods.push(join_rename(workspace, group)),
+            None => match leave_rename(workspace) {
+                Some(Ok(rename)) => methods.push(rename),
+                Some(Err(short)) => return Err(short.to_owned()),
+                None => {}
+            },
         }
     }
     methods.extend(moves);
-    (methods, ask)
+    Ok(methods)
 }
 
 /// What dropping group `group`'s header on `target` sends: every space drawn in it moves, in server
@@ -240,38 +174,17 @@ fn header_drop(
     let GroupDropTarget::Gap {
         group: None,
         before,
-        beside: false,
         ..
     } = target
     else {
         return Vec::new();
     };
-    let entries = super::super::render::workspace_entries(snapshot, &HashSet::new());
-    let spaces = group_spaces(snapshot, &entries, group);
+    let spaces = Blocks::new(snapshot).group_spaces(group);
     let mut plan = OrderPlan::new(snapshot);
     if !spaces.is_empty() {
         plan.move_block(&spaces, before.as_deref());
     }
     plan.methods
-}
-
-/// A candidate gap while the drawn rows are walked.
-struct Gap<'a> {
-    group: Option<&'a str>,
-    before: Option<&'a str>,
-    row: u16,
-    beside: bool,
-}
-
-impl Gap<'_> {
-    fn target(self) -> GroupDropTarget {
-        GroupDropTarget::Gap {
-            group: self.group.map(str::to_owned),
-            before: self.before.map(str::to_owned),
-            row: self.row,
-            beside: self.beside,
-        }
-    }
 }
 
 /// A drawn row of the space list, from its hits.
@@ -281,21 +194,33 @@ enum DrawnRow<'a> {
 }
 
 impl ClientShellState {
-    /// The snapshot and its full list (no folds) when the sidebar draws a group header: one
-    /// machine, expanded, a block head named into a group (a linked child's own `/` name draws none).
-    fn grouped_sidebar(&self) -> Option<(&ClientShellSnapshot, Vec<WorkspaceEntry>)> {
+    /// Draws the group drag (`render_group_drag`) over the frame just rendered when that frame's
+    /// sidebar is the one-machine expanded one, as `render_shell` picks it: a drag left from
+    /// before a machine came online draws nothing over the multi-machine sidebar.
+    pub(in crate::client::shell) fn draw_group_drag(&self, buffer: &mut Buffer) {
+        if self.endpoints.len() > 1 || self.sidebar_collapsed {
+            return;
+        }
+        if let Some(drag) = group_drag(self.chrome_drag.as_ref()) {
+            let hits = &self.hits;
+            render_group_drag(
+                buffer,
+                hits.workspace_body,
+                &hits.group_headers,
+                drag,
+                &self.config.palette,
+            );
+        }
+    }
+
+    /// The snapshot's blocks when the sidebar draws a group header: one machine, expanded
+    /// (`Blocks::drawn`).
+    fn grouped_sidebar(&self) -> Option<(&ClientShellSnapshot, Blocks<'_>)> {
         if self.endpoints.len() != 1 || self.sidebar_collapsed || self.mobile_layout_active() {
             return None;
         }
-        let snapshot = self
-            .snapshot
-            .as_deref()
-            .filter(|snapshot| has_groups(snapshot))?;
-        let entries = super::super::render::workspace_entries(snapshot, &HashSet::new());
-        block_groups(snapshot, &entries)
-            .iter()
-            .any(Option::is_some)
-            .then_some((snapshot, entries))
+        let snapshot = self.snapshot.as_deref()?;
+        Some((snapshot, Blocks::drawn(snapshot)?))
     }
 
     /// Every row of the space list as the last frame drew them, scrolled out ones too: folds and
@@ -331,10 +256,10 @@ impl ClientShellState {
         point: (u16, u16),
         outcome: &mut ClientShellInput,
     ) -> bool {
-        let Some((snapshot, entries)) = self.grouped_sidebar() else {
+        let Some((_, blocks)) = self.grouped_sidebar() else {
             return false;
         };
-        if moving_block(snapshot, &entries, workspace_id).is_none() {
+        if blocks.block(workspace_id).is_none() {
             return true;
         }
         let source = GroupDragSource::Space(workspace_id.to_owned());
@@ -377,24 +302,33 @@ impl ClientShellState {
         outcome.repaint = true;
     }
 
-    /// Ends a group drag: sends the renames and the move its drop makes, rename first.
+    /// Ends a group drag: sends the renames and the move its drop makes, rename first, or asks
+    /// for the dropped space's name first (`space_drop`).
     pub(in crate::client::shell) fn drop_group_drag(
         &mut self,
         drag: GroupDrag,
         outcome: &mut ClientShellInput,
     ) {
-        // A header drag's press ends here, so its release doesn't fold the group.
-        self.group_header_press = None;
         outcome.repaint = true;
         let (Some(snapshot), Some(target)) = (self.snapshot.as_deref(), drag.target) else {
             return;
         };
         match drag.source {
             GroupDragSource::Space(workspace_id) => {
-                let (methods, ask) = space_drop(snapshot, &workspace_id, &target);
-                if self.push_in_order(methods, outcome) {
-                    if let Some(name) = ask {
-                        self.ask_space_name(workspace_id, &name);
+                match space_drop(snapshot, &workspace_id, &target) {
+                    Ok(methods) => {
+                        self.push_in_order(methods, outcome);
+                    }
+                    // Saved, the name takes it to the drop's place; Esc sends nothing.
+                    Err(name) => {
+                        let GroupDropTarget::Gap { before, .. } = target else {
+                            return;
+                        };
+                        let target = SpaceName::Dropped {
+                            workspace_id,
+                            before,
+                        };
+                        self.ask_space_name(ClientRenameTarget::SpaceName(target), &name);
                     }
                 }
             }
@@ -427,15 +361,14 @@ impl ClientShellState {
         {
             return None;
         }
-        let (snapshot, entries) = self.grouped_sidebar()?;
-        let blocks = blocks(snapshot, &entries);
-        // The spaces dragged, and the group they are drawn in (None for a header: top level).
-        let (dragged, own_group) = match source {
-            GroupDragSource::Space(workspace_id) => (
-                moving_block(snapshot, &entries, workspace_id)?,
-                blocks.heads.get(workspace_id.as_str())?.0,
-            ),
-            GroupDragSource::Header(group) => (group_spaces(snapshot, &entries, group), None),
+        let (snapshot, blocks) = self.grouped_sidebar()?;
+        // The group dragged spaces are drawn in (None for a header: top level).
+        let own_group = match source {
+            GroupDragSource::Space(workspace_id) => {
+                blocks.block(workspace_id)?;
+                blocks.group(workspace_id)
+            }
+            GroupDragSource::Header(_) => None,
         };
         let mut rows = self
             .hits
@@ -452,45 +385,28 @@ impl ClientShellState {
             .collect::<Vec<_>>();
         rows.sort_by_key(|(rect, _)| rect.y);
 
-        // The gap before a row (its group and `before`; None for no gap), whether the row is
-        // dragged, and whether it is where the dragged rows start.
-        let row_facts = |row: &DrawnRow<'_>| match *row {
-            DrawnRow::Header(group) => {
-                let dragged_header =
-                    matches!(source, GroupDragSource::Header(name) if name == group);
-                (
-                    Some((None, blocks.groups.get(group).copied())),
-                    dragged_header,
-                    dragged_header,
-                )
-            }
-            DrawnRow::Space(workspace_id) => {
-                let gap = blocks.heads.get(workspace_id).and_then(|&(group, first)| {
-                    let folded =
-                        group.is_some_and(|group| self.collapsed_groups.contains(&fold_key(group)));
-                    (!folded).then_some((group, Some(first)))
-                });
-                (
-                    gap,
-                    dragged.contains(&workspace_id),
-                    matches!(source, GroupDragSource::Space(id) if id == workspace_id),
-                )
-            }
-        };
+        // The gap before a row, its line on `row`: none inside a block or a folded group.
         let mut gaps = Vec::new();
         let mut on_header = None;
-        let mut above_dragged = false;
-        let mut push_gap = |row: u16, next: &DrawnRow<'_>, above_dragged: bool| {
-            let (gap, dragged_row, dragged_start) = row_facts(next);
-            if let Some((group, before)) = gap {
-                gaps.push(Gap {
-                    group,
-                    before,
-                    row,
-                    beside: group == own_group && (above_dragged || dragged_start),
-                });
-            }
-            dragged_row
+        let mut push_gap = |row: u16, next: &DrawnRow<'_>| {
+            let (group, before) = match *next {
+                DrawnRow::Header(group) => (None, blocks.group_spaces(group).first().copied()),
+                DrawnRow::Space(workspace_id) => {
+                    let Some(first) = blocks.block_first(workspace_id) else {
+                        return;
+                    };
+                    let group = blocks.group(workspace_id);
+                    if group.is_some_and(|group| self.collapsed_groups.contains(&fold_key(group))) {
+                        return;
+                    }
+                    (group, Some(first))
+                }
+            };
+            gaps.push(GroupDropTarget::Gap {
+                group: group.map(str::to_owned),
+                before: before.map(str::to_owned),
+                row,
+            });
         };
         for (rect, row) in &rows {
             if let DrawnRow::Header(group) = *row {
@@ -498,7 +414,7 @@ impl ClientShellState {
                     on_header = Some((group, rect.y));
                 }
             }
-            above_dragged = push_gap(rect.y.saturating_sub(1), row, above_dragged);
+            push_gap(rect.y.saturating_sub(1), row);
         }
         // Below the last row shown, when a line is left above the footer: the gap before the next
         // row (scrolled out or too tall to fit), or the end.
@@ -507,30 +423,27 @@ impl ClientShellState {
             .filter(|(rect, _)| rect.bottom() < self.hits.new_workspace.y)
         {
             let drawn = self.drawn_rows(snapshot);
-            let is_last = |row: &SidebarRow<'_>| match (row, last) {
-                (SidebarRow::Header { name, .. }, DrawnRow::Header(group)) => name == group,
-                (SidebarRow::Space { entry, .. }, DrawnRow::Space(workspace_id)) => snapshot
-                    .workspaces
-                    .get(entry.index)
-                    .is_some_and(|workspace| workspace.workspace_id == *workspace_id),
-                _ => false,
+            let is_last = |row: &SidebarRow<'_>| match last {
+                DrawnRow::Header(group) => {
+                    matches!(row, SidebarRow::Header { name, .. } if name == group)
+                }
+                DrawnRow::Space(workspace_id) => row.is_space(snapshot, workspace_id),
             };
             if let Some(position) = drawn.iter().position(is_last) {
                 match drawn.get(position + 1) {
                     Some(SidebarRow::Header { name, .. }) => {
-                        push_gap(rect.bottom(), &DrawnRow::Header(name), above_dragged);
+                        push_gap(rect.bottom(), &DrawnRow::Header(name));
                     }
                     Some(SidebarRow::Space { entry, .. }) => {
                         if let Some(workspace) = snapshot.workspaces.get(entry.index) {
                             let next = DrawnRow::Space(workspace.workspace_id.as_str());
-                            push_gap(rect.bottom(), &next, above_dragged);
+                            push_gap(rect.bottom(), &next);
                         }
                     }
-                    None => gaps.push(Gap {
+                    None => gaps.push(GroupDropTarget::Gap {
                         group: None,
                         before: None,
                         row: rect.bottom(),
-                        beside: own_group.is_none() && above_dragged,
                     }),
                 }
             }
@@ -542,30 +455,32 @@ impl ClientShellState {
                 if matches!(source, GroupDragSource::Header(name) if name == group) {
                     return None;
                 }
-                return gaps
-                    .into_iter()
-                    .find(|gap| gap.row == row && gap.group.is_none())
-                    .map(Gap::target);
+                return gaps.into_iter().find(|gap| {
+                    matches!(gap, GroupDropTarget::Gap { group: None, row: at, .. } if *at == row)
+                });
             }
             if own_group != Some(group) {
                 return Some(GroupDropTarget::Header(group.to_owned()));
             }
             // Back on its own group's header: the group's first place.
-            let first = blocks.groups.get(group).copied();
             return Some(GroupDropTarget::Gap {
                 group: Some(group.to_owned()),
-                before: first.map(str::to_owned),
+                before: blocks
+                    .group_spaces(group)
+                    .first()
+                    .map(|first| (*first).to_owned()),
                 row,
-                beside: first.is_some_and(|first| dragged.contains(&first)),
             });
         }
-        let (_, gap) = gaps
-            .into_iter()
-            .enumerate()
-            .min_by_key(|(index, gap)| (point.1.abs_diff(gap.row), *index))?;
-        if header_drag && gap.group.is_some() {
+        let (_, gap) = gaps.into_iter().enumerate().min_by_key(|(index, gap)| {
+            let GroupDropTarget::Gap { row, .. } = gap else {
+                return (u16::MAX, *index);
+            };
+            (point.1.abs_diff(*row), *index)
+        })?;
+        if header_drag && matches!(gap, GroupDropTarget::Gap { group: Some(_), .. }) {
             return None;
         }
-        Some(gap.target())
+        Some(gap)
     }
 }
