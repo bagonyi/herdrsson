@@ -339,6 +339,9 @@ impl HeadlessServer {
             server_config_diagnostic_summaries(config_diagnostics);
         #[cfg(not(unix))]
         let _ = api_tx;
+        // Fork: no window is attached yet, so nobody is looking at the active tab.
+        let mut app = app;
+        app.state.outer_terminal_focus = Some(false);
         Ok(Self {
             app,
             #[cfg(unix)]
