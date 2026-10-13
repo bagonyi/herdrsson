@@ -537,6 +537,27 @@ impl<'a> Blocks<'a> {
     }
 }
 
+/// The agents waiting for the user in each named group's spaces, worktree blocks included and
+/// each space counted once, for its header's red count while folded. Empty when nobody waits.
+pub(super) fn unseen_by_group<'a>(
+    snapshot: &'a ClientShellSnapshot,
+    unseen: &super::unseen_counts::UnseenCounts<'_>,
+) -> HashMap<&'a str, usize> {
+    let mut sums = HashMap::new();
+    if unseen.is_empty() {
+        return sums;
+    }
+    let Some(blocks) = Blocks::drawn(snapshot) else {
+        return sums;
+    };
+    for (entry, group) in blocks.entries.iter().zip(&blocks.groups) {
+        if let (Some(group), Some(workspace)) = (group, snapshot.workspaces.get(entry.index)) {
+            *sums.entry(*group).or_default() += unseen.own(&workspace.workspace_id);
+        }
+    }
+    sums
+}
+
 /// The part of a space row drawn with its content: indented when the row is in a group.
 pub(super) fn content_area(rect: Rect, row: &SidebarRow<'_>) -> Rect {
     if !matches!(row, SidebarRow::Space { group: Some(_), .. }) {
@@ -569,20 +590,25 @@ pub(super) fn fill_indent(buffer: &mut Buffer, rect: Rect, content: Rect) {
 }
 
 /// A group's header row, ` ▾ Web`, bold like the multi-machine sidebar's machine rows; folded,
-/// ` ▸ ✓ Web` with the rolled-up status icon.
+/// ` ▸ ✓ Web` with the rolled-up status icon and, at the right edge, the red count of its
+/// members' agents waiting for the user (`unseen`, from `unseen_by_group`).
 pub(super) fn render_header(
     buffer: &mut Buffer,
     rect: Rect,
     name: &str,
     folded: Option<AgentStatus>,
+    unseen: usize,
     config: &ClientShellConfig,
 ) -> GroupHeaderHit {
     let palette = &config.palette;
     let style = Style::default()
         .fg(palette.text)
         .add_modifier(Modifier::BOLD);
-    // Leave the last two columns free, as space rows do.
-    let (y, right) = (rect.y, rect.right().saturating_sub(2));
+    // Unfolded, the members show their own counts.
+    let unseen = if folded.is_some() { unseen } else { 0 };
+    // Leave the last two columns free, as space rows do, or the count's.
+    let badge = super::unseen_counts::badge_width(unseen);
+    let (y, right) = (rect.y, rect.right().saturating_sub(badge.max(2)));
     let chevron = if folded.is_some() { "▸ " } else { "▾ " };
     let mut x = put_segment(buffer, rect.x.saturating_add(1), y, right, chevron, style);
     if let Some(status) = folded {
@@ -593,6 +619,7 @@ pub(super) fn render_header(
     }
     let name_text = crate::ui::truncate_end(name, usize::from(right.saturating_sub(x)));
     put_segment(buffer, x, y, right, &name_text, style);
+    super::unseen_counts::render_badge(buffer, rect, rect.right(), unseen, palette);
     GroupHeaderHit {
         rect,
         group: name.to_owned(),

@@ -24,6 +24,17 @@ pub(crate) struct ClientShellEndpoint {
     pub(crate) methods: Option<HashSet<String>>,
 }
 
+impl ClientShellEndpoint {
+    /// Agents that finished or asked a question since the user last looked at their pane.
+    pub(super) fn unseen_agents(&self) -> impl Iterator<Item = &crate::protocol::ClientShellAgent> {
+        self.snapshot
+            .as_deref()
+            .into_iter()
+            .flat_map(|snapshot| &snapshot.agents)
+            .filter(|agent| self.agent_presentation.awaits_user(agent))
+    }
+}
+
 pub(super) struct MachineHit {
     pub(super) rect: Rect,
     pub(super) status_badge: Rect,

@@ -50,12 +50,21 @@ impl EndpointAgentPresentation {
             self.acknowledged.clear();
             self.completed.clear();
             self.working.clear();
-            self.acknowledged.extend(
-                snapshot
-                    .agents
-                    .iter()
-                    .map(|agent| (agent.pane_id.clone(), agent.state_change_seq)),
-            );
+            // What happened before this window was watching is the server's call: agents it
+            // still reports done, and open questions, wait until their pane is on screen.
+            for agent in &snapshot.agents {
+                match agent.agent_status {
+                    AgentStatus::Done => {
+                        self.completed
+                            .insert(agent.pane_id.clone(), agent.state_change_seq);
+                    }
+                    AgentStatus::Blocked => {}
+                    _ => {
+                        self.acknowledged
+                            .insert(agent.pane_id.clone(), agent.state_change_seq);
+                    }
+                }
+            }
         }
         let pane_ids: HashSet<&str> = snapshot
             .agents
@@ -159,6 +168,18 @@ impl EndpointAgentPresentation {
                 .get(&agent.pane_id)
                 .is_some_and(|sequence| sequence >= completion)
         })
+    }
+
+    /// Finished or asking a question, and its pane has not been on screen since.
+    pub(super) fn awaits_user(&self, agent: &ClientShellAgent) -> bool {
+        match agent.agent_status {
+            AgentStatus::Done => true,
+            AgentStatus::Blocked => self
+                .acknowledged
+                .get(&agent.pane_id)
+                .is_none_or(|sequence| *sequence < agent.state_change_seq),
+            _ => false,
+        }
     }
 
     fn projected_status(&self, agent: &ClientShellAgent) -> AgentStatus {
@@ -274,13 +295,26 @@ mod tests {
     }
 
     #[test]
-    fn first_snapshot_establishes_an_idle_baseline_without_server_seen_authority() {
+    fn first_snapshot_keeps_what_the_server_reports_done() {
         let mut presentation = EndpointAgentPresentation::default();
         let mut snapshot = snapshot(AgentStatus::Done, 4, 1);
 
         presentation.project_snapshot(&mut snapshot);
 
+        assert_eq!(snapshot.agents[0].agent_status, AgentStatus::Done);
+        assert!(presentation.awaits_user(&snapshot.agents[0]));
+    }
+
+    #[test]
+    fn first_snapshot_takes_idle_agents_as_seen() {
+        let mut presentation = EndpointAgentPresentation::default();
+        presentation.receive_completions(None, completions("endpoint-boot", 1, Some(4)));
+        let mut snapshot = snapshot(AgentStatus::Idle, 4, 1);
+
+        presentation.project_snapshot(&mut snapshot);
+
         assert_eq!(snapshot.agents[0].agent_status, AgentStatus::Idle);
+        assert!(!presentation.awaits_user(&snapshot.agents[0]));
     }
 
     fn assert_idle_sequence(states: &[(AgentStatus, u64)]) {
@@ -474,5 +508,34 @@ mod tests {
         assert!(!presentation.acknowledge_surface(&mut completed, &surface(1), Some(true)));
         assert!(!presentation.acknowledge_surface(&mut completed, &surface(2), Some(false)));
         assert_eq!(completed.agents[0].agent_status, AgentStatus::Done);
+    }
+
+    #[test]
+    fn finished_agents_and_questions_await_the_user_until_their_pane_is_on_screen() {
+        let mut presentation = EndpointAgentPresentation::default();
+        let mut baseline = snapshot(AgentStatus::Blocked, 4, 1);
+        presentation.project_snapshot(&mut baseline);
+        assert!(
+            presentation.awaits_user(&baseline.agents[0]),
+            "a question already open when the window opens waits for the user too"
+        );
+        presentation.acknowledge_surface(&mut baseline, &surface(1), Some(true));
+        assert!(!presentation.awaits_user(&baseline.agents[0]));
+
+        let mut asking = snapshot(AgentStatus::Blocked, 5, 2);
+        presentation.project_snapshot(&mut asking);
+        assert!(presentation.awaits_user(&asking.agents[0]));
+        presentation.acknowledge_surface(&mut asking, &surface(2), Some(true));
+        assert!(!presentation.awaits_user(&asking.agents[0]));
+
+        let mut working = snapshot(AgentStatus::Working, 6, 3);
+        presentation.project_snapshot(&mut working);
+        assert!(!presentation.awaits_user(&working.agents[0]));
+        let mut finished = snapshot(AgentStatus::Idle, 7, 4);
+        presentation.project_snapshot(&mut finished);
+        assert_eq!(finished.agents[0].agent_status, AgentStatus::Done);
+        assert!(presentation.awaits_user(&finished.agents[0]));
+        presentation.acknowledge_surface(&mut finished, &surface(4), Some(true));
+        assert!(!presentation.awaits_user(&finished.agents[0]));
     }
 }

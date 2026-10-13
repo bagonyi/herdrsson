@@ -1,5 +1,6 @@
 use super::*;
 use crate::client::shell::space_groups::{self, SidebarRow};
+use crate::client::shell::unseen_counts::{self, UnseenCounts};
 use ratatui::{
     text::Line,
     widgets::{Paragraph, Widget},
@@ -87,6 +88,7 @@ pub(crate) fn render_collapsed_sidebar(
     snapshot: &ClientShellSnapshot,
     config: &ClientShellConfig,
     selected_workspace_id: Option<&str>,
+    unseen: &UnseenCounts<'_>,
     hits: &mut ShellHitMap,
 ) {
     let palette = &config.palette;
@@ -121,6 +123,7 @@ pub(crate) fn render_collapsed_sidebar(
         } else {
             Style::default().fg(palette.overlay0)
         };
+        let number_style = unseen.number_style(&workspace.workspace_id, number_style, palette);
         put_text(
             buffer,
             rect.x,
@@ -322,6 +325,8 @@ pub(crate) fn render_sidebar(
         .saturating_sub(metrics.offset_from_bottom);
     let show_scrollbar = metrics.max_offset_from_bottom > 0 && body.width > 1;
     let content_width = body.width.saturating_sub(u16::from(show_scrollbar));
+    let unseen = UnseenCounts::of_endpoint(state.endpoints, state.active_endpoint_id);
+    let group_unseen = space_groups::unseen_by_group(snapshot, &unseen);
     let mut y = body.y;
     for (row_position, row) in sidebar_rows
         .iter()
@@ -335,7 +340,8 @@ pub(crate) fn render_sidebar(
                     break;
                 }
                 let rect = Rect::new(body.x, y, content_width, 1);
-                let hit = space_groups::render_header(buffer, rect, name, *folded, config);
+                let count = group_unseen.get(name).copied().unwrap_or(0);
+                let hit = space_groups::render_header(buffer, rect, name, *folded, count, config);
                 hits.group_headers.push(hit);
                 y = y.saturating_add(1).saturating_add(gap);
                 continue;
@@ -364,6 +370,7 @@ pub(crate) fn render_sidebar(
             buffer.set_style(rect, Style::default().bg(palette.active_row_bg));
         }
         let content = space_groups::content_area(rect, row);
+        let waiting = unseen.space(snapshot, workspace, state.collapsed_groups);
         render_workspace_rows(
             buffer,
             content,
@@ -375,6 +382,9 @@ pub(crate) fn render_sidebar(
             selected,
             state.selected_workspace_id.is_some(),
             dragged,
+            unseen_counts::text_end(rect, waiting, || {
+                parent_group_key(snapshot, entry.index).is_some()
+            }),
             palette,
         );
         space_groups::fill_indent(buffer, rect, content);
@@ -386,6 +396,7 @@ pub(crate) fn render_sidebar(
             state.collapsed_groups,
             palette,
         );
+        unseen_counts::render_space_badge(buffer, rect, group_toggle.is_some(), waiting, palette);
         hits.workspaces.push(WorkspaceHit {
             rect,
             endpoint_id: ClientEndpointId::Local,
@@ -602,7 +613,7 @@ fn worktree_entries(
     entries
 }
 
-fn parent_group_key(snapshot: &ClientShellSnapshot, index: usize) -> Option<String> {
+pub(crate) fn parent_group_key(snapshot: &ClientShellSnapshot, index: usize) -> Option<String> {
     let workspace = snapshot.workspaces.get(index)?;
     let worktree = workspace.worktree.as_ref()?;
     if worktree.is_linked_worktree {
@@ -751,6 +762,10 @@ pub(in crate::client::shell) fn labeled_workspace_rows(
     )
 }
 
+/// Fork: `first_line_end` is the column the first line's text ends before, which leaves room for
+/// a red count (`unseen_counts::text_end`).
+// Upstream's eleven arguments were clippy's limit already.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::client::shell) fn render_workspace_rows(
     buffer: &mut Buffer,
     area: Rect,
@@ -762,6 +777,7 @@ pub(in crate::client::shell) fn render_workspace_rows(
     selected: bool,
     navigating: bool,
     dragged: bool,
+    first_line_end: u16,
     palette: &Palette,
 ) {
     for (row_index, row) in rows.iter().enumerate() {
@@ -812,6 +828,11 @@ pub(in crate::client::shell) fn render_workspace_rows(
         } else {
             palette.overlay0
         });
+        let end = if row_index == 0 {
+            first_line_end
+        } else {
+            area.right().saturating_sub(2)
+        };
         let spans = crate::ui::resolved_token_spans(
             row,
             (
@@ -823,12 +844,9 @@ pub(in crate::client::shell) fn render_workspace_rows(
             secondary_style,
             Style::default().fg(palette.overlay1),
             palette,
-            area.right().saturating_sub(2).saturating_sub(x) as usize,
+            end.saturating_sub(x) as usize,
         );
-        Paragraph::new(Line::from(spans)).render(
-            Rect::new(x, y, area.right().saturating_sub(2).saturating_sub(x), 1),
-            buffer,
-        );
+        Paragraph::new(Line::from(spans)).render(Rect::new(x, y, end.saturating_sub(x), 1), buffer);
     }
 
     let background = if selected {

@@ -79,15 +79,26 @@ fn render_group_drag(
             .find(|hit| hit.group == group)
             .map(|hit| hit.rect)
     };
+    // Only the header's plain background: its red count keeps its own.
+    let light = |buffer: &mut Buffer, rect: Rect, background| {
+        for position in rect.positions() {
+            if let Some(cell) = buffer
+                .cell_mut(position)
+                .filter(|cell| cell.bg == palette.sidebar_bg)
+            {
+                cell.set_bg(background);
+            }
+        }
+    };
     if let GroupDragSource::Header(group) = &drag.source {
         if let Some(rect) = header(group) {
-            buffer.set_style(rect, Style::default().bg(palette.surface1));
+            light(buffer, rect, palette.surface1);
         }
     }
     match &drag.target {
         Some(GroupDropTarget::Header(group)) => {
             if let Some(rect) = header(group) {
-                buffer.set_style(rect, Style::default().bg(drop_background(palette)));
+                light(buffer, rect, drop_background(palette));
             }
         }
         // The rows upstream draws its line on: from the blank line above the list to its end.
