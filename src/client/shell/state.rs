@@ -47,6 +47,8 @@ pub(crate) struct ClientShellConfig {
     pub(super) redraw_on_focus_gained: bool,
     /// Fork: `ui.zen_width`.
     pub(super) zen_width: u16,
+    /// Fork: `ui.seen_delay_ms`.
+    pub(super) seen_delay: std::time::Duration,
     pub(super) switch_ascii_input_source_in_prefix: bool,
     pub(super) local_config_path: std::path::PathBuf,
     pub(super) preferences_path: Option<std::path::PathBuf>,
