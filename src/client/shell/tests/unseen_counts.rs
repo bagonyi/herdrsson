@@ -423,7 +423,8 @@ fn hovered_and_dragged_rows_keep_their_red_counts() {
             modifiers: KeyModifiers::NONE,
         })]);
         let buffer = render(&mut state);
-        assert_row(&buffer, row, palette.selection_bg, expected);
+        let hover = crate::client::shell::row_hover::sidebar_hover_background(&palette);
+        assert_row(&buffer, row, hover.expect("an RGB theme"), expected);
     }
     state.clear_row_hover();
 

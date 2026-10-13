@@ -1,5 +1,6 @@
 use super::*;
 use crossterm::event::{MouseEvent, MouseEventKind};
+use ratatui::style::Color;
 
 /// A tab, sidebar row or the sidebar's resize divider under the mouse.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,6 +67,7 @@ impl ClientShellState {
     /// divider line takes the muted overlay text colour.
     pub(super) fn render_row_hover(&self, buffer: &mut Buffer) {
         let palette = &self.config.palette;
+        let sidebar_hover = sidebar_hover_background(palette);
         let (rect, recolor): (Rect, &dyn Fn(&mut ratatui::buffer::Cell)) = match self.hovered_row()
         {
             Some(HoveredRow::Tab(rect)) => (rect, &|cell| {
@@ -75,7 +77,14 @@ impl ClientShellState {
             }),
             Some(HoveredRow::Sidebar(rect)) => (rect, &|cell| {
                 if cell.bg == palette.sidebar_bg {
-                    cell.set_bg(palette.selection_bg);
+                    match sidebar_hover {
+                        Some(background) => {
+                            cell.set_bg(background);
+                        }
+                        None => {
+                            cell.modifier.insert(Modifier::UNDERLINED);
+                        }
+                    }
                 }
             }),
             Some(HoveredRow::SidebarDivider(rect)) => (rect, &|cell| {
@@ -93,4 +102,17 @@ impl ClientShellState {
             }
         }
     }
+}
+
+/// A hovered sidebar row's background: halfway between the active row's and the Navigate
+/// cursor's, so it reads as neither. A theme of terminal colours (the `terminal` theme) has none
+/// to mix, as its active row and cursor share one grey: there the row is underlined instead.
+pub(super) fn sidebar_hover_background(palette: &Palette) -> Option<Color> {
+    let (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) =
+        (palette.active_row_bg, palette.selection_bg)
+    else {
+        return None;
+    };
+    let middle = |a: u8, b: u8| (a & b) + ((a ^ b) >> 1);
+    Some(Color::Rgb(middle(r1, r2), middle(g1, g2), middle(b1, b2)))
 }
