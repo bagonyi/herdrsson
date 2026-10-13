@@ -143,15 +143,25 @@ fn a_new_window_counts_what_the_server_still_reports_unseen() {
         assert_eq!(space_count(&state, &buffer, "ws_1"), expected, "{why}");
     }
 
-    // Both wait until their pane is on screen.
-    for status in [AgentStatus::Done, AgentStatus::Blocked] {
-        let mut state = new_window(status);
-        let mut on_screen = surface();
-        on_screen.surface_revision += 1;
-        on_screen.panes[0].pane_id = "pane_9".into();
-        state.set_pane_surface(on_screen);
-        let buffer = render(&mut state);
-        assert_eq!(space_count(&state, &buffer, "ws_1"), None, "{status:?}");
+    // Both wait until their pane has been on screen for `ui.seen_delay_ms`, or at all with 0.
+    for (seen_delay, expected) in [
+        (std::time::Duration::from_secs(1), count(1)),
+        (std::time::Duration::ZERO, None),
+    ] {
+        for status in [AgentStatus::Done, AgentStatus::Blocked] {
+            let mut state = new_window(status);
+            state.config.seen_delay = seen_delay;
+            let mut on_screen = surface();
+            on_screen.surface_revision += 1;
+            on_screen.panes[0].pane_id = "pane_9".into();
+            state.set_pane_surface(on_screen);
+            let buffer = render(&mut state);
+            assert_eq!(
+                space_count(&state, &buffer, "ws_1"),
+                expected,
+                "{status:?}, delay {seen_delay:?}"
+            );
+        }
     }
 }
 

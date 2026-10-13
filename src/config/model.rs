@@ -1029,6 +1029,9 @@ pub struct UiConfig {
     /// Fork: zen mode's width in columns, the pane's frame and scrollbar included; at least 40.
     /// Default: 150.
     pub zen_width: u16,
+    /// Fork: milliseconds a tab must stay on screen before its finished agents count as seen.
+    /// 0 counts them as seen as soon as the tab shows. Default: 1000.
+    pub seen_delay_ms: u32,
 }
 
 /// Cursor shape (DECSCUSR) used for the forced IME anchor.
@@ -1256,6 +1259,7 @@ impl Default for UiConfig {
             toast: ToastConfig::default(),
             sound: SoundConfig::default(),
             zen_width: 150,
+            seen_delay_ms: 1000,
         }
     }
 }
@@ -1887,6 +1891,19 @@ redraw_on_focus_gained = false
             .iter()
             .all(|binding| binding.trigger.is_prefix()));
         assert_eq!(config.keybinds().zen_mode.bindings.len(), 1);
+    }
+
+    #[test]
+    fn seen_delay_defaults_to_a_second_and_zero_turns_it_off() {
+        assert_eq!(Config::default().ui.seen_delay_ms, 1000);
+
+        let toml = r#"
+[ui]
+seen_delay_ms = 0
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.ui.seen_delay_ms, 0);
+        assert!(toml::from_str::<Config>("[ui]\nseen_delay_ms = -1").is_err());
     }
 
     #[test]
