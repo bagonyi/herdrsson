@@ -1,3 +1,10 @@
+> [!NOTE]
+> **Herdrsson is a personal, unofficial fork of [herdrdev/herdr](https://github.com/herdrdev/herdr).**
+> The `herdrsson` branch is Herdr's code plus space groups in the sidebar (a space named
+> `Web/blog` shows as `blog` under a `Web` header) and a few agent, tab bar and key changes;
+> [FORK.md](FORK.md) lists them and explains how to build it.
+> The install instructions below install stock Herdr, not this fork.
+
 # herdr
 
 
