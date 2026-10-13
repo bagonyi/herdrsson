@@ -331,3 +331,94 @@ async fn seen_pane_frame_on_a_server() {
     agent_working_again_takes_its_frame_away(&mut server, &render);
     shutdown_test_runtimes(&mut server);
 }
+
+/// The test's client socket variable and folder, put back and removed however the test ends.
+struct FreshServerEnv {
+    previous: Option<Option<std::ffi::OsString>>,
+    dir: std::path::PathBuf,
+}
+
+impl FreshServerEnv {
+    const VARIABLE: &'static str = crate::server::socket_paths::CLIENT_SOCKET_PATH_ENV_VAR;
+
+    fn set(dir: std::path::PathBuf) -> Self {
+        let _ = fs::create_dir_all(&dir);
+        let previous = std::env::var_os(Self::VARIABLE);
+        std::env::set_var(Self::VARIABLE, dir.join("client.sock"));
+        Self {
+            previous: Some(previous),
+            dir,
+        }
+    }
+
+    fn restore(&mut self) {
+        match self.previous.take() {
+            Some(Some(previous)) => std::env::set_var(Self::VARIABLE, previous),
+            Some(None) => std::env::remove_var(Self::VARIABLE),
+            None => {}
+        }
+    }
+}
+
+impl Drop for FreshServerEnv {
+    fn drop(&mut self) {
+        self.restore();
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// A server that has just started has no window, so nobody is looking at its current tab: an
+/// agent whose finish the screen shows there stays unseen until a window looks. The config
+/// tests' lock covers the variable; no other test reads it unlocked but autodetect's, which
+/// sets it under its own lock: so the test binds only the path it set, and checks the server
+/// did too.
+#[test]
+fn a_fresh_server_keeps_an_agent_finishing_in_its_current_tab_unseen() {
+    let _lock = crate::config::test_config_env_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut env =
+        FreshServerEnv::set(std::env::temp_dir().join(format!("hf-{}", std::process::id())));
+    let socket = env.dir.join("client.sock");
+    let path = client_socket_path();
+    assert_eq!(
+        path, socket,
+        "never bind anything but the test's own socket"
+    );
+    let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut app = crate::app::App::new(
+        &crate::config::Config::default(),
+        crate::app::AppPolicy::TEST,
+        None,
+        api_rx,
+        api::EventHub::default(),
+    );
+    app.state.workspaces = vec![Workspace::test_new("only")];
+    app.state.ensure_test_terminals();
+    app.state.active = Some(0);
+    let created = HeadlessServer::new(app, &[], None, None, ServerStop::default());
+    env.restore();
+    let mut server = created.expect("server");
+    assert_eq!(server.client_socket_path, socket);
+    let pane_id = server.app.state.workspaces[0].tabs[0].root_pane;
+
+    for state in [
+        crate::detect::AgentState::Working,
+        crate::detect::AgentState::Idle,
+    ] {
+        server.app.state.handle_app_event(AppEvent::StateChanged {
+            pane_id,
+            agent: Some(crate::detect::Agent::Pi),
+            state,
+            visible_blocker: false,
+            visible_working: state == crate::detect::AgentState::Working,
+            process_exited: false,
+            observed_at: Instant::now(),
+        });
+    }
+
+    let unseen = !seen(&server, pane_id);
+    shutdown_test_runtimes(&mut server);
+    drop(server);
+    assert!(unseen);
+}
