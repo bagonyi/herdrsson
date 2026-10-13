@@ -299,6 +299,8 @@ impl HeadlessServer {
                 | Method::PaneSplit(_)
                 | Method::PaneSwap(_)
                 | Method::PaneZoom(_)
+                // Fork: a plugin's split or tab changes the layout as PaneSplit does.
+                | Method::PluginPaneOpen(_)
                 | Method::TabClose(_)
                 | Method::TabCreate(_)
                 | Method::TabFocus(_)
