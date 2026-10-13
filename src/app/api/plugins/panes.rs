@@ -87,6 +87,33 @@ impl App {
         pane: PluginManifestPane,
         placement: PluginPanePlacement,
     ) -> String {
+        // Herdrsson: the new pane's width (right split) or height (down split),
+        // as a percentage, sets the split ratio, so the pane opens at its size
+        // instead of at half and then being resized.
+        let (direction, size, other) = match params
+            .direction
+            .unwrap_or(crate::api::schema::SplitDirection::Right)
+        {
+            crate::api::schema::SplitDirection::Right => {
+                (Direction::Horizontal, params.width, params.height)
+            }
+            crate::api::schema::SplitDirection::Down => {
+                (Direction::Vertical, params.height, params.width)
+            }
+        };
+        let ratio = match (size, other) {
+            (None, None) => 0.5,
+            (Some(crate::popup_size::PopupSize::Percent(percent)), None) => {
+                1.0 - f32::from(percent) / 100.0
+            }
+            _ => {
+                return encode_error(
+                    id,
+                    "invalid_params",
+                    "a split takes a percentage: width for a right split, height for a down split",
+                );
+            }
+        };
         let target_pane_id = params
             .target_pane_id
             .clone()
@@ -108,13 +135,6 @@ impl App {
                 Ok(env) => env,
                 Err((code, message)) => return encode_error(id, &code, message),
             };
-        let direction = match params
-            .direction
-            .unwrap_or(crate::api::schema::SplitDirection::Right)
-        {
-            crate::api::schema::SplitDirection::Right => Direction::Horizontal,
-            crate::api::schema::SplitDirection::Down => Direction::Vertical,
-        };
         let new_pane_placement = if placement == PluginPanePlacement::Zoomed {
             crate::ui::NewPanePlacement::ZoomedOverlay
         } else {
@@ -122,7 +142,7 @@ impl App {
                 ws_idx,
                 target: target_pane,
                 direction,
-                ratio: 0.5,
+                ratio,
             }
         };
         let (rows, cols) = self.state.new_pane_size(new_pane_placement);
@@ -130,9 +150,10 @@ impl App {
         let Some(ws) = self.state.workspaces.get_mut(ws_idx) else {
             return encode_error(id, "workspace_not_found", "workspace not found");
         };
-        let result = ws.split_pane_argv_command(
+        let result = ws.split_pane_argv_command_with_ratio(
             target_pane,
             direction,
+            ratio,
             rows,
             cols,
             Some(cwd),
