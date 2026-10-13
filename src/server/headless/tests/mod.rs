@@ -7,6 +7,7 @@ mod pane_move_tests;
 mod plugin_panes;
 #[path = "pane_graphics.rs"]
 mod retained_graphics_tests;
+mod seen_flash;
 #[path = "surface_delta.rs"]
 mod surface_delta_tests;
 #[path = "surface_interest.rs"]
