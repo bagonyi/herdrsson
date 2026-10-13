@@ -856,6 +856,42 @@ impl HeadlessServer {
         self.app.set_host_terminal_theme(host_terminal_theme);
     }
 
+    /// Fork: a tab can come on screen without a switch, such as when the one in front of it
+    /// closes. Once the focused window shows it, count it as looked at, as a switch would.
+    fn mark_shown_tab_seen(&mut self) {
+        let Some(client_id) = self.foreground_client_id else {
+            return;
+        };
+        let focused = self
+            .clients
+            .get(&client_id)
+            .is_some_and(|client| client.outer_terminal_focus == Some(true));
+        let Some(target) = focused
+            .then(|| self.shell_target_for_client(client_id))
+            .flatten()
+        else {
+            return;
+        };
+        let Some(tab) = self
+            .app
+            .state
+            .workspaces
+            .get_mut(target.workspace_index)
+            .and_then(|ws| ws.tabs.get_mut(target.tab_index))
+        else {
+            return;
+        };
+        let mut changed = false;
+        for pane in tab.panes.values_mut() {
+            changed |= pane.mark_seen_and_flash();
+        }
+        if changed {
+            let pane_id = tab.layout.focused();
+            self.app
+                .emit_focus_api_events(target.workspace_index, pane_id);
+        }
+    }
+
     fn emit_active_focus_events(&mut self) {
         let focus = self.app.state.active.and_then(|ws_idx| {
             let pane_id = self.app.state.workspaces.get(ws_idx)?.focused_pane_id()?;
@@ -3332,6 +3368,13 @@ impl HeadlessServer {
                 }
                 changed = true;
             }
+        }
+
+        // Fork: count a tab that came on screen without a switch as seen. A seen pane's green
+        // frame needs a full render to show and to go away.
+        self.mark_shown_tab_seen();
+        if self.app.state.sync_seen_flashes(now) {
+            changed = true;
         }
 
         if self
