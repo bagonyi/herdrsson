@@ -213,7 +213,7 @@ released, and the Herdr release it's built on.
 
 ```
 $ herdr --version
-herdrsson 2026.10.08 (based on herdr 0.9.3)
+herdrsson 2026.10.14 (based on herdr 0.9.3)
 ```
 
 A second release on the same day ends in `.2`. Moving onto a new Herdr release changes only the
@@ -225,6 +225,10 @@ uses the Herdr number.
   plugin can open a split at a set size.
 - 2026.10.08 (on Herdr 0.9.3): a finished agent counts as looked at only once its tab has stayed
   on screen for a second (`seen_delay_ms`).
+- 2026.10.14 (on Herdr's code of 2026-10-08, after 0.9.3): rebuilt on Herdr's newest code. New:
+  space groups by name, and zen mode. The green frame now shows while a finished agent waits,
+  instead of for 2 seconds once it's looked at, and a pane hidden behind its tab's zoom no longer
+  counts as looked at.
 
 ## caveats
 
