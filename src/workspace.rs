@@ -449,7 +449,7 @@ impl Workspace {
     }
 
     /// Fork: the tab's agents count as seen once it has been on screen for a moment, which
-    /// `AppState` decides (see `seen_flash`).
+    /// `AppState` decides (see `unseen_frame`).
     pub fn switch_tab(&mut self, idx: usize) {
         if idx < self.tabs.len() {
             self.active_tab = idx;

@@ -479,13 +479,9 @@ impl AppState {
             return false;
         };
 
-        // Fork: with a seen delay, this only starts the wait (see `seen_flash`).
-        let now = std::time::Instant::now();
-        let mut changed = false;
-        for pane in tab.panes.values_mut() {
-            changed |= pane.see(now, delay);
-        }
-        changed
+        // Fork: with a seen delay, this only starts the wait, and a pane hidden behind the tab's
+        // zoom isn't seen (see `unseen_frame`).
+        tab.see_shown_panes(std::time::Instant::now(), delay)
     }
 
     pub fn move_workspace(&mut self, source_idx: usize, insert_idx: usize) -> bool {
@@ -1849,7 +1845,8 @@ impl AppState {
         change: &EffectiveStateChange,
         suppress_completion: bool,
     ) -> Option<bool> {
-        let is_active_tab = self.pane_is_in_active_tab(ws_idx, pane_id);
+        // Fork: a pane hidden behind its tab's zoom isn't on screen, so its finish isn't seen.
+        let is_active_tab = self.pane_visible_on_active_surface(ws_idx, pane_id);
         let suppress_active_tab_notifications =
             active_tab_suppresses_notifications(is_active_tab, self.outer_terminal_focus);
         let pane = self.workspaces[ws_idx]

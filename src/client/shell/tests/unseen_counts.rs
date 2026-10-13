@@ -143,7 +143,8 @@ fn a_new_window_counts_what_the_server_still_reports_unseen() {
         assert_eq!(space_count(&state, &buffer, "ws_1"), expected, "{why}");
     }
 
-    // Both wait until their pane has been on screen for `ui.seen_delay_ms`, or at all with 0.
+    // On screen for no time yet: a question waits out `ui.seen_delay_ms`, and a finished agent
+    // waits for the server to count it as seen. With 0, both go as soon as their pane shows.
     for (seen_delay, expected) in [
         (std::time::Duration::from_secs(1), count(1)),
         (std::time::Duration::ZERO, None),
@@ -162,6 +163,74 @@ fn a_new_window_counts_what_the_server_still_reports_unseen() {
                 "{status:?}, delay {seen_delay:?}"
             );
         }
+    }
+}
+
+#[test]
+fn a_finished_agents_red_count_goes_when_the_server_counts_it_as_seen_and_not_before() {
+    let mut first = snapshot();
+    first.agents = vec![waiting_agent("ws_1", "pane_9", AgentStatus::Done)];
+    let mut state = grouped_state(first);
+    state.config.seen_delay = std::time::Duration::from_millis(1);
+    state.outer_focused = Some(true);
+    let mut on_screen = surface();
+    on_screen.surface_revision += 1;
+    on_screen.panes[0].pane_id = "pane_9".into();
+    state.set_pane_surface(on_screen.clone());
+
+    // On screen for longer than the window's delay, but the server still reports it done.
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    state.tick_seen();
+    assert!(!state.acknowledge_active_surface_agents(&on_screen));
+    let buffer = render(&mut state);
+    assert_eq!(space_count(&state, &buffer, "ws_1"), count(1));
+
+    // The server counts it as seen: its green frame and the window's count go together.
+    let mut seen = snapshot();
+    seen.revision += 1;
+    seen.agents = vec![waiting_agent("ws_1", "pane_9", AgentStatus::Idle)];
+    state.set_snapshot(Box::new(seen));
+    state.set_pane_surface(PaneSurfaceFrame {
+        projection_revision: 2,
+        surface_revision: 3,
+        ..on_screen
+    });
+    let buffer = render(&mut state);
+    assert_eq!(space_count(&state, &buffer, "ws_1"), None);
+}
+
+#[test]
+fn the_servers_verdict_clears_the_count_in_the_background_and_with_the_pane_off_screen() {
+    // The window went to the background, or on to another tab (or the pane is behind a zoom),
+    // before the server counted the finished agent as seen.
+    for (outer_focused, shows_pane, why) in [
+        (Some(false), true, "in the background"),
+        (Some(true), false, "off screen"),
+    ] {
+        let mut first = snapshot();
+        first.agents = vec![waiting_agent("ws_1", "pane_9", AgentStatus::Done)];
+        let mut state = grouped_state(first);
+        state.outer_focused = outer_focused;
+        let mut on_screen = surface();
+        on_screen.surface_revision += 1;
+        if shows_pane {
+            on_screen.panes[0].pane_id = "pane_9".into();
+        }
+        state.set_pane_surface(on_screen.clone());
+        let buffer = render(&mut state);
+        assert_eq!(space_count(&state, &buffer, "ws_1"), count(1), "{why}");
+
+        let mut seen = snapshot();
+        seen.revision += 1;
+        seen.agents = vec![waiting_agent("ws_1", "pane_9", AgentStatus::Idle)];
+        state.set_snapshot(Box::new(seen));
+        state.set_pane_surface(PaneSurfaceFrame {
+            projection_revision: 2,
+            surface_revision: 3,
+            ..on_screen
+        });
+        let buffer = render(&mut state);
+        assert_eq!(space_count(&state, &buffer, "ws_1"), None, "{why}");
     }
 }
 

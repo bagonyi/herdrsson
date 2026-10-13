@@ -13,16 +13,25 @@ pub(super) struct EndpointAgentPresentation {
         Option<u64>,
         crate::protocol::endpoint::EndpointAgentCompletions,
     )>,
-    /// Fork: a pane counts as looked at once it has been on screen this long (`ui.seen_delay_ms`).
+    /// Fork: a question counts as looked at once its pane has been on screen this long
+    /// (`ui.seen_delay_ms`), and a finished agent once the server counts it as seen. With 0, both
+    /// count as soon as their pane shows.
     pub(super) seen_delay: std::time::Duration,
     /// Fork: when each pane on screen came into view.
     on_screen_since: HashMap<String, std::time::Instant>,
-    /// Fork: whether the last look passed over a pane still waiting out the delay, so the timer
-    /// has to look again (`ClientShellState::tick_seen`). Otherwise the timer has nothing to do.
+    /// Fork: whether the last look passed over a question still waiting out the delay, so the
+    /// timer has to look again (`ClientShellState::tick_seen`). Otherwise the timer has nothing
+    /// to do: a finished agent waits for the server instead.
     pub(super) waiting: bool,
     /// Fork: panes whose agent the server reports idle rather than done, so it counts a finish
-    /// there as seen. A pane on screen follows it, so the window and the server agree.
+    /// there as seen. With a seen delay, a finished agent on screen counts as looked at only
+    /// then, so the window's red count goes when the server's green frame and the API's "done"
+    /// do.
     server_seen: HashSet<String>,
+    /// Fork: the finish (state change sequence) of each agent the server last reported done. When
+    /// the server reports the same finish idle, it has counted it as looked at, and the window
+    /// follows at once, in the background or with the pane off screen too.
+    server_done: HashMap<String, u64>,
 }
 
 impl EndpointAgentPresentation {
@@ -60,6 +69,7 @@ impl EndpointAgentPresentation {
             self.acknowledged.clear();
             self.completed.clear();
             self.working.clear();
+            self.server_done.clear();
             // What happened before this window was watching is the server's call: agents it
             // still reports done, and open questions, wait until their pane is on screen.
             for agent in &snapshot.agents {
@@ -87,6 +97,8 @@ impl EndpointAgentPresentation {
             .retain(|pane_id, _| pane_ids.contains(pane_id.as_str()));
         self.working
             .retain(|pane_id| pane_ids.contains(pane_id.as_str()));
+        self.server_done
+            .retain(|pane_id, _| pane_ids.contains(pane_id.as_str()));
         let completions = self
             .pending_completions
             .take()
@@ -103,6 +115,7 @@ impl EndpointAgentPresentation {
             .map(|agent| agent.pane_id.clone())
             .collect();
         for agent in &mut snapshot.agents {
+            self.follow_server_verdict(agent);
             match agent.agent_status {
                 AgentStatus::Working => {
                     self.working.insert(agent.pane_id.clone());
@@ -171,12 +184,6 @@ impl EndpointAgentPresentation {
                     now
                 }
             };
-            if now.saturating_duration_since(since) < self.seen_delay
-                && !self.server_seen.contains(&pane.pane_id)
-            {
-                self.waiting = true;
-                continue;
-            }
             let Some(agent) = snapshot
                 .agents
                 .iter()
@@ -184,6 +191,16 @@ impl EndpointAgentPresentation {
             else {
                 continue;
             };
+            // With a seen delay, a finished agent counts as looked at once the server says so, and
+            // a question, which the server doesn't track, once its pane has been on screen that
+            // long.
+            let question = agent.agent_status == AgentStatus::Blocked;
+            let waited = (self.seen_delay.is_zero() || question)
+                && now.saturating_duration_since(since) >= self.seen_delay;
+            if !waited && !self.server_seen.contains(&pane.pane_id) {
+                self.waiting |= question;
+                continue;
+            }
             let acknowledged = self.acknowledged.entry(agent.pane_id.clone()).or_default();
             if *acknowledged < agent.state_change_seq {
                 *acknowledged = agent.state_change_seq;
@@ -197,6 +214,24 @@ impl EndpointAgentPresentation {
             project_aggregate_status(snapshot);
         }
         changed
+    }
+
+    /// Fork: a finished agent counts as looked at when the server says so: the window's red count,
+    /// the server's green frame and the API's "done" go together, whatever the window shows.
+    fn follow_server_verdict(&mut self, agent: &ClientShellAgent) {
+        if agent.agent_status == AgentStatus::Done {
+            if self.server_done.get(&agent.pane_id) != Some(&agent.state_change_seq) {
+                self.server_done
+                    .insert(agent.pane_id.clone(), agent.state_change_seq);
+            }
+            return;
+        }
+        let reported_done = self.server_done.remove(&agent.pane_id);
+        if agent.agent_status == AgentStatus::Idle && reported_done == Some(agent.state_change_seq)
+        {
+            let acknowledged = self.acknowledged.entry(agent.pane_id.clone()).or_default();
+            *acknowledged = (*acknowledged).max(agent.state_change_seq);
+        }
     }
 
     /// Fork: nothing of this endpoint is being looked at, such as when the window is in the
@@ -555,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn a_finished_agent_awaits_the_user_until_its_pane_stays_on_screen_for_the_delay() {
+    fn a_finished_agent_on_screen_awaits_the_user_until_the_server_counts_it_as_seen() {
         let delay = std::time::Duration::from_secs(1);
         let mut presentation = EndpointAgentPresentation {
             seen_delay: delay,
@@ -566,42 +601,70 @@ mod tests {
         // The server reports it done: it doesn't count it as seen yet either.
         let mut finished = snapshot(AgentStatus::Done, 5, 2);
         presentation.project_snapshot(&mut finished);
-
-        // Just on screen: not looked at yet.
         assert!(!presentation.acknowledge_surface(&mut finished, &surface(2), Some(true)));
-        assert!(presentation.awaits_user(&finished.agents[0]));
+        // The server decides, so the window's timer has nothing to wait for.
+        assert!(!presentation.waiting);
 
-        // The window in the background starts the wait over.
-        assert!(!presentation.acknowledge_surface(&mut finished, &surface(2), Some(false)));
-        assert!(presentation.on_screen_since.is_empty());
-
-        presentation.acknowledge_surface(&mut finished, &surface(2), Some(true));
+        // On screen past the delay by the window's clock, but not yet by the server's.
         for since in presentation.on_screen_since.values_mut() {
             *since -= delay;
         }
-        assert!(presentation.acknowledge_surface(&mut finished, &surface(2), Some(true)));
-        assert_eq!(finished.agents[0].agent_status, AgentStatus::Idle);
-        assert!(!presentation.awaits_user(&finished.agents[0]));
+        assert!(!presentation.acknowledge_surface(&mut finished, &surface(2), Some(true)));
+        assert!(presentation.awaits_user(&finished.agents[0]));
+
+        // The server counts it as seen, and the window's red count goes with its green frame,
+        // with the snapshot that says so: no look is needed.
+        let mut seen = snapshot(AgentStatus::Idle, 5, 3);
+        presentation.project_snapshot(&mut seen);
+        assert_eq!(seen.agents[0].agent_status, AgentStatus::Idle);
+        assert!(!presentation.awaits_user(&seen.agents[0]));
+        assert!(!presentation.acknowledge_surface(&mut seen, &surface(3), Some(true)));
     }
 
     #[test]
-    fn a_finished_agent_on_screen_counts_as_seen_once_the_server_says_so() {
+    fn without_a_delay_a_finished_agent_counts_as_seen_as_soon_as_its_pane_shows() {
+        let mut presentation = EndpointAgentPresentation::default();
+        let mut working = snapshot(AgentStatus::Working, 4, 1);
+        presentation.project_snapshot(&mut working);
+        // The window's look and the server's land together: it doesn't wait for the server.
+        let mut finished = snapshot(AgentStatus::Done, 5, 2);
+        presentation.project_snapshot(&mut finished);
+        assert!(presentation.awaits_user(&finished.agents[0]));
+
+        assert!(presentation.acknowledge_surface(&mut finished, &surface(2), Some(true)));
+        assert!(!presentation.awaits_user(&finished.agents[0]));
+        assert!(!presentation.waiting);
+    }
+
+    #[test]
+    fn a_question_awaits_the_user_until_its_pane_stays_on_screen_for_the_delay() {
+        let delay = std::time::Duration::from_secs(1);
         let mut presentation = EndpointAgentPresentation {
-            seen_delay: std::time::Duration::from_secs(1),
+            seen_delay: delay,
             ..Default::default()
         };
         let mut working = snapshot(AgentStatus::Working, 4, 1);
         presentation.project_snapshot(&mut working);
-        let mut finished = snapshot(AgentStatus::Done, 5, 2);
-        presentation.project_snapshot(&mut finished);
-        assert!(!presentation.acknowledge_surface(&mut finished, &surface(2), Some(true)));
+        let mut asking = snapshot(AgentStatus::Blocked, 5, 2);
+        presentation.project_snapshot(&mut asking);
 
-        // The server's own wait ends a moment before the window's: the window follows it, so
-        // leaving the tab now leaves no red count behind.
-        let mut seen = snapshot(AgentStatus::Idle, 5, 3);
-        presentation.project_snapshot(&mut seen);
-        assert!(presentation.acknowledge_surface(&mut seen, &surface(3), Some(true)));
-        assert!(!presentation.awaits_user(&seen.agents[0]));
+        // Just on screen: not looked at yet, and the window's timer has to look again.
+        assert!(!presentation.acknowledge_surface(&mut asking, &surface(2), Some(true)));
+        assert!(presentation.awaits_user(&asking.agents[0]));
+        assert!(presentation.waiting);
+
+        // The window in the background starts the wait over.
+        assert!(!presentation.acknowledge_surface(&mut asking, &surface(2), Some(false)));
+        assert!(presentation.on_screen_since.is_empty());
+        assert!(!presentation.waiting);
+
+        presentation.acknowledge_surface(&mut asking, &surface(2), Some(true));
+        for since in presentation.on_screen_since.values_mut() {
+            *since -= delay;
+        }
+        assert!(presentation.acknowledge_surface(&mut asking, &surface(2), Some(true)));
+        assert!(!presentation.awaits_user(&asking.agents[0]));
+        assert!(!presentation.waiting);
     }
 
     #[test]
@@ -625,7 +688,7 @@ mod tests {
     }
 
     #[test]
-    fn the_timer_counts_a_pane_as_seen_once_it_has_waited_and_then_stops_looking() {
+    fn the_timer_counts_a_question_as_seen_once_it_has_waited_and_then_stops_looking() {
         use crate::client::shell::{ClientEndpointId, ClientShellConfig, ClientShellState};
         let mut shell = ClientShellState::new(ClientShellConfig::from_config(
             &crate::config::Config::default(),
@@ -638,12 +701,6 @@ mod tests {
             Box::new(snapshot(AgentStatus::Working, 4, 1)),
         );
         shell.set_pane_surface(surface(1));
-        shell.set_endpoint_snapshot_for_generation(
-            &id,
-            4,
-            Box::new(snapshot(AgentStatus::Done, 5, 2)),
-        );
-        shell.set_pane_surface(surface(2));
         fn presentation(shell: &mut ClientShellState) -> &mut EndpointAgentPresentation {
             &mut shell
                 .endpoints
@@ -652,24 +709,46 @@ mod tests {
                 .unwrap()
                 .agent_presentation
         }
+        fn awaits_user(shell: &mut ClientShellState) -> bool {
+            let agent = shell.snapshot.as_ref().unwrap().agents[0].clone();
+            presentation(shell).awaits_user(&agent)
+        }
 
-        // On screen, but not for long enough yet.
+        // A question: on screen, but not for long enough yet.
+        shell.set_endpoint_snapshot_for_generation(
+            &id,
+            4,
+            Box::new(snapshot(AgentStatus::Blocked, 5, 2)),
+        );
+        shell.set_pane_surface(surface(2));
         assert!(presentation(&mut shell).waiting);
         assert!(!shell.tick_seen());
-        assert_eq!(
-            shell.snapshot.as_ref().unwrap().agents[0].agent_status,
-            AgentStatus::Done
-        );
+        assert!(awaits_user(&mut shell));
 
         for since in presentation(&mut shell).on_screen_since.values_mut() {
             *since -= std::time::Duration::from_secs(1);
         }
         assert!(shell.tick_seen());
-        assert_eq!(
-            shell.snapshot.as_ref().unwrap().agents[0].agent_status,
-            AgentStatus::Idle
-        );
+        assert!(!awaits_user(&mut shell));
         // Nothing on screen waits any more, so the timer doesn't look again.
+        assert!(!presentation(&mut shell).waiting);
+        assert!(!shell.tick_seen());
+
+        // The agent works and finishes in the pane, long on screen: it waits for the server, not
+        // the timer.
+        shell.set_endpoint_snapshot_for_generation(
+            &id,
+            4,
+            Box::new(snapshot(AgentStatus::Working, 6, 3)),
+        );
+        shell.set_pane_surface(surface(3));
+        shell.set_endpoint_snapshot_for_generation(
+            &id,
+            4,
+            Box::new(snapshot(AgentStatus::Done, 7, 4)),
+        );
+        shell.set_pane_surface(surface(4));
+        assert!(awaits_user(&mut shell));
         assert!(!presentation(&mut shell).waiting);
         assert!(!shell.tick_seen());
 
@@ -687,10 +766,11 @@ mod tests {
             &crate::config::Config::default(),
         ));
         let id = ClientEndpointId::Local;
+        // A question on screen, so the timer looks again.
         shell.set_endpoint_snapshot_for_generation(
             &id,
             4,
-            Box::new(snapshot(AgentStatus::Working, 4, 1)),
+            Box::new(snapshot(AgentStatus::Blocked, 4, 1)),
         );
         shell.set_pane_surface(surface(1));
         let endpoint = shell
@@ -698,15 +778,16 @@ mod tests {
             .iter_mut()
             .find(|endpoint| endpoint.endpoint_id == id)
             .unwrap();
+        assert!(endpoint.agent_presentation.waiting);
         for since in endpoint.agent_presentation.on_screen_since.values_mut() {
             *since -= std::time::Duration::from_secs(1);
         }
-        // A new connection's first snapshot, same boot and revision, with a finished agent.
+        // A new connection's first snapshot, same boot and revision, with a new question.
         shell.mark_endpoint_disconnected(&id);
         shell.cache_endpoint_snapshot_inactive_for_generation(
             &id,
             5,
-            Box::new(snapshot(AgentStatus::Done, 5, 1)),
+            Box::new(snapshot(AgentStatus::Blocked, 5, 1)),
         );
 
         shell.tick_seen();
@@ -720,10 +801,7 @@ mod tests {
             .iter()
             .find(|endpoint| endpoint.endpoint_id == id)
             .unwrap();
-        assert_eq!(
-            endpoint.snapshot.as_ref().unwrap().agents[0].agent_status,
-            AgentStatus::Done
-        );
+        assert_eq!(endpoint.unseen_agents().count(), 1);
     }
 
     #[test]
@@ -752,11 +830,11 @@ mod tests {
             *since -= std::time::Duration::from_secs(2);
         }
         shell.mark_endpoint_disconnected(&id);
-        // The new connection's first snapshot waits (the agent finished meanwhile).
+        // The new connection's first snapshot waits (the agent asked a question meanwhile).
         shell.cache_endpoint_snapshot_inactive_for_generation(
             &id,
             5,
-            Box::new(snapshot(AgentStatus::Done, 5, 1)),
+            Box::new(snapshot(AgentStatus::Blocked, 5, 1)),
         );
         // In the background for a while (timer ticks), then back.
         shell.outer_focused = Some(false);
@@ -766,7 +844,7 @@ mod tests {
         shell.set_endpoint_snapshot_for_generation(
             &id,
             5,
-            Box::new(snapshot(AgentStatus::Done, 5, 2)),
+            Box::new(snapshot(AgentStatus::Blocked, 5, 2)),
         );
         shell.set_pane_surface(surface(2));
         let endpoint = shell
@@ -785,42 +863,79 @@ mod tests {
     fn coming_back_to_the_window_while_reconnecting_leaves_the_cached_snapshot_alone() {
         use crate::client::shell::{ClientEndpointId, ClientShellConfig, ClientShellState};
         use crate::raw_input::RawInputEvent;
-        let mut shell = ClientShellState::new(ClientShellConfig::from_config(
-            &crate::config::Config::default(),
-        ));
-        let id = ClientEndpointId::Local;
-        shell.handle_raw_events(vec![RawInputEvent::OuterFocusGained]);
-        shell.set_endpoint_snapshot_for_generation(
-            &id,
-            4,
-            Box::new(snapshot(AgentStatus::Working, 4, 1)),
-        );
-        shell.set_pane_surface(surface(1));
-        for since in shell
-            .endpoints
-            .iter_mut()
-            .find(|endpoint| endpoint.endpoint_id == id)
-            .unwrap()
-            .agent_presentation
-            .on_screen_since
-            .values_mut()
-        {
-            *since -= std::time::Duration::from_secs(1);
+        // In the new connection's first snapshot: a question, which the window's own clock
+        // decides; a finish the server counted as seen at once; and, without a delay, a finished
+        // agent, which a look acknowledges at once.
+        for (seen_delay, status) in [
+            (std::time::Duration::from_secs(1), AgentStatus::Blocked),
+            (std::time::Duration::from_secs(1), AgentStatus::Idle),
+            (std::time::Duration::ZERO, AgentStatus::Done),
+        ] {
+            let mut shell = ClientShellState::new(ClientShellConfig::from_config(
+                &crate::config::Config::default(),
+            ));
+            shell.config.seen_delay = seen_delay;
+            let id = ClientEndpointId::Local;
+            shell.handle_raw_events(vec![RawInputEvent::OuterFocusGained]);
+            shell.set_endpoint_snapshot_for_generation(
+                &id,
+                4,
+                Box::new(snapshot(AgentStatus::Working, 4, 1)),
+            );
+            shell.set_pane_surface(surface(1));
+            for since in shell
+                .endpoints
+                .iter_mut()
+                .find(|endpoint| endpoint.endpoint_id == id)
+                .unwrap()
+                .agent_presentation
+                .on_screen_since
+                .values_mut()
+            {
+                *since -= std::time::Duration::from_secs(1);
+            }
+            shell.mark_endpoint_disconnected(&id);
+            shell.cache_endpoint_snapshot_inactive_for_generation(
+                &id,
+                5,
+                Box::new(snapshot(status, 5, 1)),
+            );
+            shell.handle_raw_events(vec![RawInputEvent::OuterFocusLost]);
+            shell.tick_seen();
+            shell.handle_raw_events(vec![RawInputEvent::OuterFocusGained]);
+            assert_eq!(
+                shell.snapshot.as_ref().unwrap().agents[0].state_change_seq,
+                4,
+                "the old connection's frame must not take in the new connection's snapshot \
+                 ({status:?}, delay {seen_delay:?})"
+            );
         }
-        shell.mark_endpoint_disconnected(&id);
-        shell.cache_endpoint_snapshot_inactive_for_generation(
-            &id,
-            5,
-            Box::new(snapshot(AgentStatus::Done, 5, 1)),
-        );
-        shell.handle_raw_events(vec![RawInputEvent::OuterFocusLost]);
-        shell.tick_seen();
-        shell.handle_raw_events(vec![RawInputEvent::OuterFocusGained]);
-        assert_eq!(
-            shell.snapshot.as_ref().unwrap().agents[0].state_change_seq,
-            4,
-            "the old connection's frame must not take in the new connection's snapshot"
-        );
+    }
+
+    #[test]
+    fn the_servers_verdict_on_a_finished_agent_counts_in_the_background_and_off_screen() {
+        let mut elsewhere = surface(3);
+        elsewhere.panes.clear();
+        // The window went to the background, or on to another tab, just before the verdict came.
+        for (outer_focused, look) in [(Some(false), surface(3)), (Some(true), elsewhere)] {
+            let mut presentation = EndpointAgentPresentation {
+                seen_delay: std::time::Duration::from_secs(1),
+                ..Default::default()
+            };
+            let mut working = snapshot(AgentStatus::Working, 4, 1);
+            presentation.project_snapshot(&mut working);
+            let mut finished = snapshot(AgentStatus::Done, 5, 2);
+            presentation.project_snapshot(&mut finished);
+            presentation.acknowledge_surface(&mut finished, &surface(2), Some(true));
+            assert!(presentation.awaits_user(&finished.agents[0]));
+
+            let mut seen = snapshot(AgentStatus::Idle, 5, 3);
+            presentation.project_snapshot(&mut seen);
+            presentation.acknowledge_surface(&mut seen, &look, outer_focused);
+
+            assert_eq!(seen.agents[0].agent_status, AgentStatus::Idle);
+            assert!(!presentation.awaits_user(&seen.agents[0]));
+        }
     }
 
     #[test]
