@@ -890,6 +890,7 @@ impl ClientShellState {
                 self.mode = ClientShellMode::Navigate;
                 self.navigate_workspace_id = self.focused_navigation_target();
                 self.reveal_navigation_workspace = true;
+                self.zen_skip_space_picker(); // Fork: zen mode hides the space picker.
                 outcome.repaint = true;
             }
             return;

@@ -45,6 +45,8 @@ pub(crate) struct ClientShellConfig {
     pub(super) mouse_scroll_lines: usize,
     pub(super) right_click_passthrough_modifiers: Option<crossterm::event::KeyModifiers>,
     pub(super) redraw_on_focus_gained: bool,
+    /// Fork: `ui.zen_width`.
+    pub(super) zen_width: u16,
     pub(super) switch_ascii_input_source_in_prefix: bool,
     pub(super) local_config_path: std::path::PathBuf,
     pub(super) preferences_path: Option<std::path::PathBuf>,
@@ -929,6 +931,7 @@ pub(crate) struct ClientShellState {
     pub(super) reveal_navigation_workspace: bool,
     pub(super) overlay: Option<ClientShellOverlay>,
     pub(super) previous_pane_id: Option<String>,
+    pub(super) zen: super::zen::ZenMode,
     pub(super) pane_mouse_gesture: Option<ClientPaneMouseGesture>,
     pub(super) link_hover: Option<super::link_hover::LinkHover>,
     pub(super) row_hover: Option<(u16, u16)>,
@@ -1105,6 +1108,7 @@ impl ClientShellState {
             reveal_navigation_workspace: false,
             overlay,
             previous_pane_id: None,
+            zen: super::zen::ZenMode::new(preferences.zen_width),
             pane_mouse_gesture: None,
             link_hover: None,
             row_hover: None,
@@ -1249,6 +1253,14 @@ impl ClientShellState {
     }
 
     pub(super) fn layout(&self, cols: u16, rows: u16) -> ClientShellLayout {
+        if let Some(layout) = self.zen_layout(cols, rows) {
+            return layout;
+        }
+        self.layout_outside_zen(cols, rows)
+    }
+
+    /// Fork: the layout with the sidebar and tab bar, zen mode or not.
+    pub(super) fn layout_outside_zen(&self, cols: u16, rows: u16) -> ClientShellLayout {
         self.config.layout(
             cols,
             rows,
