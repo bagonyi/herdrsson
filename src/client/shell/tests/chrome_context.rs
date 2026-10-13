@@ -523,3 +523,97 @@ fn close_confirmation_error_becomes_client_owned_overlay_and_stable_workspace_cl
             if params.workspace_id == "ws_1" && !params.close_group
     ));
 }
+
+#[test]
+fn hidden_agents_panel_gives_the_sidebar_to_spaces() {
+    let sidebar_text = |state: &mut ClientShellState| {
+        let frame = state.compose(106, 30).expect("expanded sidebar");
+        frame
+            .cells
+            .iter()
+            .map(|cell| cell.symbol.as_str())
+            .collect::<String>()
+    };
+    let mut config = Config::default();
+    let mut shown = ClientShellState::new(ClientShellConfig::from_config(&config));
+    shown.set_snapshot(Box::new(snapshot()));
+    shown.set_pane_surface(surface());
+    assert!(sidebar_text(&mut shown).contains(" agents"));
+    assert!(shown.hits.workspace_body.bottom() + 1 < shown.hits.sidebar_toggle.y);
+
+    config.ui.sidebar.agents.hidden = true;
+    let mut hidden = ClientShellState::new(ClientShellConfig::from_config(&config));
+    hidden.set_snapshot(Box::new(snapshot()));
+    hidden.set_pane_surface(surface());
+    let text = sidebar_text(&mut hidden);
+    assert!(text.contains(" spaces"));
+    assert!(!text.contains(" agents"));
+    assert_eq!(hidden.hits.sidebar_section_divider, Rect::default());
+    assert_eq!(
+        hidden.hits.workspace_body.bottom() + 1,
+        hidden.hits.sidebar_toggle.y,
+        "the spaces list ends at its footer, right above the sidebar toggle"
+    );
+}
+
+#[test]
+fn hidden_agents_panel_leaves_space_groups_the_full_height() {
+    // Ten groups with one space each: 20 rows, more than the spaces list holds beside the
+    // agents panel.
+    let grouped = || {
+        let mut projected = snapshot();
+        projected.workspaces = (1..=10)
+            .map(|number| {
+                let mut workspace = projected.workspaces[0].clone();
+                workspace.workspace_id = format!("ws_{number}");
+                workspace.number = number;
+                workspace.label = format!("G{number}/space{number}");
+                workspace.custom_label = true;
+                workspace.branch = None;
+                workspace.focused = number == 1;
+                workspace
+            })
+            .collect();
+        projected
+    };
+    let mut config = Config::default();
+    let mut shown = ClientShellState::new(ClientShellConfig::from_config(&config));
+    shown.set_snapshot(Box::new(grouped()));
+    shown.set_pane_surface(surface());
+    shown.compose(106, 30).expect("frame");
+    assert!(shown.hits.group_headers.len() < 10);
+
+    config.ui.sidebar.agents.hidden = true;
+    let mut hidden = ClientShellState::new(ClientShellConfig::from_config(&config));
+    hidden.set_snapshot(Box::new(grouped()));
+    hidden.set_pane_surface(surface());
+    hidden.compose(106, 30).expect("frame");
+    assert_eq!(hidden.hits.group_headers.len(), 10);
+    assert_eq!(hidden.hits.workspaces.len(), 10);
+    let body = hidden.hits.workspace_body;
+    assert!(hidden
+        .hits
+        .group_headers
+        .iter()
+        .all(|hit| hit.rect.y >= body.y && hit.rect.y < body.bottom()));
+
+    let header = hidden
+        .hits
+        .group_headers
+        .iter()
+        .find(|hit| hit.group == "G10")
+        .expect("last group's header")
+        .rect;
+    for kind in [
+        MouseEventKind::Down(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Left),
+    ] {
+        hidden.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind,
+            column: header.x + 4,
+            row: header.y,
+            modifiers: KeyModifiers::empty(),
+        })]);
+    }
+    assert!(hidden.collapsed_groups.contains("group:G10"));
+}
