@@ -82,6 +82,7 @@ mod native_graphics;
 mod notifications;
 mod render;
 mod retained_surface;
+mod seen;
 mod surface_interest;
 
 // Producers can refill even a bounded channel while it is being drained.
@@ -847,66 +848,12 @@ impl HeadlessServer {
         let server_keybindings = self.server_keybindings.clone();
         apply_keybindings(&mut self.app, &server_keybindings);
         self.sync_visible_server_config_diagnostic(false);
-        if outer_terminal_focus == Some(true) && self.app.state.mark_active_tab_seen() {
-            // Agents that finished while the window was away are seen now. Announce it the way
-            // switching to the tab would, so plugins tracking unseen agents catch up.
-            self.emit_active_focus_events();
-            // Their green frames go. Typing gets here too, and doesn't render on its own.
-            self.app.render_dirty.request_generic();
-        }
+        // Fork: the loop's tick counts what the focused window shows as seen (`seen.rs`).
         self.app.set_host_terminal_appearance_state(
             host_terminal_appearance,
             host_terminal_appearance_explicit,
         );
         self.app.set_host_terminal_theme(host_terminal_theme);
-    }
-
-    /// Fork: the tab the focused window shows counts as looked at once it has been on screen for
-    /// `ui.seen_delay_ms`, however it got there; a tab can also come on screen without a switch,
-    /// such as when the one in front of it closes; a pane hidden behind its zoom waits until it
-    /// shows. Every other tab's wait ends. Returns whether a pane was marked seen, which takes its
-    /// green frame away.
-    fn mark_shown_tab_seen(&mut self, now: Instant) -> bool {
-        let shown = self.foreground_client_id.and_then(|client_id| {
-            let focused = self
-                .clients
-                .get(&client_id)
-                .is_some_and(|client| client.outer_terminal_focus == Some(true));
-            focused
-                .then(|| self.shell_target_for_client(client_id))
-                .flatten()
-        });
-        self.app.state.stop_seen_waits_except(shown);
-        let delay = self.app.state.seen_delay;
-        let Some(target) = shown else {
-            return false;
-        };
-        let Some(tab) = self
-            .app
-            .state
-            .workspaces
-            .get_mut(target.workspace_index)
-            .and_then(|ws| ws.tabs.get_mut(target.tab_index))
-        else {
-            return false;
-        };
-        let seen = tab.see_shown_panes(now, delay);
-        if seen {
-            let pane_id = tab.layout.focused();
-            self.app
-                .emit_focus_api_events(target.workspace_index, pane_id);
-        }
-        seen
-    }
-
-    fn emit_active_focus_events(&mut self) {
-        let focus = self.app.state.active.and_then(|ws_idx| {
-            let pane_id = self.app.state.workspaces.get(ws_idx)?.focused_pane_id()?;
-            Some((ws_idx, pane_id))
-        });
-        if let Some((ws_idx, pane_id)) = focus {
-            self.app.emit_focus_api_events(ws_idx, pane_id);
-        }
     }
 
     fn sync_visible_server_config_diagnostic(&mut self, uses_local_keybindings: bool) {
@@ -3377,11 +3324,8 @@ impl HeadlessServer {
             }
         }
 
-        // Fork: count the tab on screen as seen once it has been there long enough. Its green
-        // frame needs a full render to go away.
-        if self.mark_shown_tab_seen(now) {
-            changed = true;
-        }
+        // Fork: a pane marked seen loses its green frame (`seen.rs`).
+        changed |= self.mark_shown_tab_seen(now);
 
         if self
             .app
