@@ -890,8 +890,6 @@ mod tests {
     fn agent_focus_marks_already_focused_done_agent_seen() {
         let mut app = app_with_agent();
         app.state.outer_terminal_focus = Some(false);
-        // Fork: seen at once, as with `ui.seen_delay_ms = 0`.
-        app.state.seen_delay = std::time::Duration::ZERO;
 
         let pane_id = app.state.workspaces[0].tabs[0].root_pane;
         let terminal_id = app.state.workspaces[0].tabs[0].panes[&pane_id]
@@ -916,6 +914,20 @@ mod tests {
             },
         );
 
+        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+        let ResponseResult::AgentInfo { agent } = success.result else {
+            panic!("expected agent info response");
+        };
+        // Fork: it counts as seen once on screen for `ui.seen_delay_ms` (1 s by default), so it
+        // is still done; with no delay it is seen at once.
+        assert_eq!(agent.agent_status, AgentStatus::Done);
+        app.state.seen_delay = std::time::Duration::ZERO;
+        let response = app.handle_agent_focus(
+            "req".into(),
+            AgentTarget {
+                target: app.public_pane_id(0, pane_id).unwrap(),
+            },
+        );
         let success: SuccessResponse = serde_json::from_str(&response).unwrap();
         let ResponseResult::AgentInfo { agent } = success.result else {
             panic!("expected agent info response");
