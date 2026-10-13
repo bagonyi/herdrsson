@@ -453,17 +453,13 @@ impl ClientShellState {
                     outcome,
                 );
             }
-            ClientContextMenuAction::Zoom => {
-                // Fork: zen mode leaves a zoom you set alone.
-                self.note_your_zoom(Some(&pane_id));
-                self.push_endpoint_method(
-                    Method::PaneZoom(PaneZoomParams {
-                        pane_id: Some(pane_id),
-                        mode: PaneZoomMode::Toggle,
-                    }),
-                    outcome,
-                );
-            }
+            ClientContextMenuAction::Zoom => self.push_endpoint_method(
+                Method::PaneZoom(PaneZoomParams {
+                    pane_id: Some(pane_id),
+                    mode: PaneZoomMode::Toggle,
+                }),
+                outcome,
+            ),
             ClientContextMenuAction::ToggleRightClickPassthrough => self.push_endpoint_method(
                 Method::PaneInputSet(PaneInputSetParams {
                     pane_id,
