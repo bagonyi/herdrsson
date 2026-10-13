@@ -310,7 +310,9 @@ impl ClientShellState {
                     self.outer_focused = Some(true);
                     outcome.query_host_appearance = true;
                     outcome.repaint |= self.config.redraw_on_focus_gained;
-                    if let Some(surface) = self.pane_surface.clone() {
+                    // Fork: not while reconnecting, when the frame is the old connection's.
+                    let on_display = self.active_snapshot_on_display();
+                    if let Some(surface) = self.pane_surface.clone().filter(|_| on_display) {
                         outcome.repaint |= self.acknowledge_active_surface_agents(&surface);
                     }
                     outcome

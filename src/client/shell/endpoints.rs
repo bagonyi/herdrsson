@@ -688,9 +688,9 @@ impl ClientShellState {
         changed
     }
 
-    /// Fork: acknowledges agents whose pane has now been on screen for `ui.seen_delay_ms`, as no
-    /// new frame may come to do it. Panes of the machines not on screen, and every pane while the
-    /// window is in the background, start their wait over.
+    /// Fork: acknowledges questions whose pane has now been on screen for `ui.seen_delay_ms`, as
+    /// no new frame may come to do it. Panes of the machines not on screen, and every pane while
+    /// the window is in the background, start their wait over.
     pub(crate) fn tick_seen(&mut self) -> bool {
         if self.config.seen_delay.is_zero() {
             return false;
@@ -701,14 +701,11 @@ impl ClientShellState {
                 endpoint.agent_presentation.leave_screen();
             }
         }
-        // Only the snapshot on display, with the frame drawn from it: while reconnecting, the old
-        // connection's frame stays up and the new connection's snapshots wait (see
-        // `cache_endpoint_snapshot_inactive_for_generation`). And only while a pane on screen is
-        // still waiting, so the timer does no work per pane otherwise.
-        let waiting_on_display = self.pane_surface_generation == self.active_snapshot_generation
+        // Only the snapshot on display, and only while a question on screen is still waiting, so
+        // the timer does no work per pane otherwise.
+        let waiting_on_display = self.active_snapshot_on_display()
             && self.endpoints.iter().any(|endpoint| {
                 endpoint.endpoint_id == self.active_endpoint_id
-                    && endpoint.snapshot_generation == self.active_snapshot_generation
                     && endpoint.agent_presentation.waiting
             });
         if !waiting_on_display {
@@ -720,6 +717,18 @@ impl ClientShellState {
         let changed = self.acknowledge_active_surface_agents(&surface);
         self.pane_surface = Some(surface);
         changed
+    }
+
+    /// Fork: whether the frame on display was drawn from the active endpoint's snapshot. While
+    /// reconnecting, the old connection's frame stays up and the new connection's snapshots wait
+    /// (see `cache_endpoint_snapshot_inactive_for_generation`), so a look at the frame mustn't
+    /// take them in.
+    pub(super) fn active_snapshot_on_display(&self) -> bool {
+        self.pane_surface_generation == self.active_snapshot_generation
+            && self.endpoints.iter().any(|endpoint| {
+                endpoint.endpoint_id == self.active_endpoint_id
+                    && endpoint.snapshot_generation == self.active_snapshot_generation
+            })
     }
 
     #[cfg(test)]

@@ -854,7 +854,7 @@ pub struct AppState {
     pub sound: SoundConfig,
     pub toast_config: ToastConfig,
     /// Fork: how long a tab stays on screen before its finished agents count as seen
-    /// (`ui.seen_delay_ms`; see `seen_flash`).
+    /// (`ui.seen_delay_ms`; see `unseen_frame`).
     pub seen_delay: std::time::Duration,
     pub keybinds: Keybinds,
     /// UI color palette — all sidebar/UI colors centralized for theming.
