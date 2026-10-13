@@ -931,6 +931,7 @@ pub(crate) struct ClientShellState {
     pub(super) previous_pane_id: Option<String>,
     pub(super) pane_mouse_gesture: Option<ClientPaneMouseGesture>,
     pub(super) link_hover: Option<super::link_hover::LinkHover>,
+    pub(super) row_hover: Option<(u16, u16)>,
     pub(super) url_click_consumes_until_up: bool,
     /// The host terminal reports key releases (Kitty event types), so text
     /// presses can be tracked until their release arrives.
@@ -1106,6 +1107,7 @@ impl ClientShellState {
             previous_pane_id: None,
             pane_mouse_gesture: None,
             link_hover: None,
+            row_hover: None,
             url_click_consumes_until_up: false,
             host_reports_key_releases: false,
             host_erase_is_ctrl_h: false,
