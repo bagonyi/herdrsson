@@ -31,6 +31,9 @@ pub(super) struct ClientChromePreferences {
     /// Fork: the zen mode width set with the resize keys.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) zen_width: Option<u16>,
+    /// Fork: the zooms zen mode has yet to undo.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) zen_zooms: Vec<super::zen::SavedZenZoom>,
 }
 
 pub(super) fn path_for_local_endpoint(socket_path: &Path) -> PathBuf {

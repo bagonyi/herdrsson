@@ -279,7 +279,9 @@ mod tests {
 
     #[test]
     fn the_keys_work_in_zen_mode() {
-        let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+        let mut config = Config::default();
+        config.keys.zen_mode = crate::config::BindingConfig::one("prefix+shift+z");
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
         state.set_snapshot(focused(1, "ws_1", "ws_1:t1"));
         state.set_snapshot(focused(2, "ws_2", "ws_2:t1"));
         state.set_snapshot(focused(3, "ws_2", "ws_2:t2"));
