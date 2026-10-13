@@ -37,6 +37,7 @@ pub(super) fn render_mode_bar(
     update_available: bool,
     keybinds: &LiveKeybindConfig,
     palette: &Palette,
+    zen: bool,
 ) -> Option<Rect> {
     if (mode == ClientShellMode::Terminal && endpoint_error.is_none()) || pane_area.is_empty() {
         return None;
@@ -91,8 +92,20 @@ pub(super) fn render_mode_bar(
                     (" cancel  ".to_owned(), base),
                     (prefix, key),
                     (" send prefix  ".to_owned(), base),
-                    (prefix_rhs(&keybinds.keybinds.workspace_picker), key),
-                    (" workspace nav  ".to_owned(), base),
+                ]);
+                // Fork: zen mode has no space picker, and its key, when it has one, is the only
+                // way out.
+                if !zen {
+                    segments.extend([
+                        (prefix_rhs(&keybinds.keybinds.workspace_picker), key),
+                        (" workspace nav  ".to_owned(), base),
+                    ]);
+                }
+                if let Some(zen_key) = keybinds.keybinds.zen_mode.prefix_rhs_label() {
+                    let label = if zen { " leave zen  " } else { " zen  " };
+                    segments.extend([(zen_key, key), (label.to_owned(), base)]);
+                }
+                segments.extend([
                     (prefix_rhs(&keybinds.keybinds.help), key),
                     (" keybinds".to_owned(), base),
                 ]);

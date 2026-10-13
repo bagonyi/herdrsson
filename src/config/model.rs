@@ -455,6 +455,13 @@ pub struct KeysConfig {
     pub resize_pane_right: BindingConfig,
     /// Toggle sidebar collapse. Default: "prefix+b"
     pub toggle_sidebar: BindingConfig,
+    /// Fork: turn zen mode on or off: the focused pane alone, centred. Unset by default.
+    pub zen_mode: BindingConfig,
+    /// Fork: make zen mode narrower. Only acts in zen mode; outside it a direct key reaches the
+    /// pane. Unset by default.
+    pub zen_narrower: BindingConfig,
+    /// Fork: make zen mode wider, like `zen_narrower`. Unset by default.
+    pub zen_wider: BindingConfig,
     /// Optional indexed shortcuts expanded over number keys 1-9.
     pub indexed: IndexedKeysConfig,
     /// Prefix-mode custom command bindings.
@@ -592,6 +599,12 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     toggle_sidebar: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    zen_mode: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    zen_narrower: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    zen_wider: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     indexed: Option<IndexedKeysConfig>,
     #[serde(skip_serializing)]
     command: Option<Vec<CommandKeybindConfig>>,
@@ -703,6 +716,9 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(resize_pane_up);
         apply_field!(resize_pane_right);
         apply_field!(toggle_sidebar);
+        apply_field!(zen_mode);
+        apply_field!(zen_narrower);
+        apply_field!(zen_wider);
         apply_field!(indexed);
         apply_field!(command);
 
@@ -808,6 +824,9 @@ impl KeysConfig {
         copy_effective_action_field!(resize_pane_up, keybinds.resize_pane_up);
         copy_effective_action_field!(resize_pane_right, keybinds.resize_pane_right);
         copy_effective_action_field!(toggle_sidebar, keybinds.toggle_sidebar);
+        copy_effective_action_field!(zen_mode, keybinds.zen_mode);
+        copy_effective_action_field!(zen_narrower, keybinds.zen_narrower);
+        copy_effective_action_field!(zen_wider, keybinds.zen_wider);
         copy_user_field!(indexed);
 
         profile
@@ -1007,6 +1026,9 @@ pub struct UiConfig {
     pub toast: ToastConfig,
     /// Play sounds when agents change state in background workspaces.
     pub sound: SoundConfig,
+    /// Fork: zen mode's width in columns, the pane's frame and scrollbar included; at least 40.
+    /// Default: 150.
+    pub zen_width: u16,
 }
 
 /// Cursor shape (DECSCUSR) used for the forced IME anchor.
@@ -1180,6 +1202,9 @@ impl Default for KeysConfig {
             resize_pane_up: BindingConfig::empty(),
             resize_pane_right: BindingConfig::empty(),
             toggle_sidebar: BindingConfig::one("prefix+b"),
+            zen_mode: BindingConfig::empty(),
+            zen_narrower: BindingConfig::empty(),
+            zen_wider: BindingConfig::empty(),
             indexed: IndexedKeysConfig::default(),
             command: Vec::new(),
             user_fields: BTreeSet::new(),
@@ -1230,6 +1255,7 @@ impl Default for UiConfig {
             accent: "cyan".into(),
             toast: ToastConfig::default(),
             sound: SoundConfig::default(),
+            zen_width: 150,
         }
     }
 }
@@ -1843,6 +1869,24 @@ redraw_on_focus_gained = false
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.ui.redraw_on_focus_gained);
+    }
+
+    #[test]
+    fn zen_mode_key_is_unset_and_zen_width_defaults_to_150() {
+        let default_config = Config::default();
+        assert!(default_config.keybinds().zen_mode.bindings.is_empty());
+        assert_eq!(default_config.ui.zen_width, 150);
+
+        let config: Config =
+            toml::from_str("[keys]\nzen_mode = \"prefix+d\"\n\n[ui]\nzen_width = 120").unwrap();
+        assert_eq!(config.ui.zen_width, 120);
+        assert!(config
+            .keybinds()
+            .zen_mode
+            .bindings
+            .iter()
+            .all(|binding| binding.trigger.is_prefix()));
+        assert_eq!(config.keybinds().zen_mode.bindings.len(), 1);
     }
 
     #[test]

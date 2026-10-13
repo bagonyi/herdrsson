@@ -192,6 +192,9 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # resize_pane_up = ""     # optional, e.g. "ctrl+shift+alt+up"
 # resize_pane_right = ""  # optional, e.g. "ctrl+shift+alt+right"
 # toggle_sidebar = "prefix+b"
+# zen_mode = ""         # optional, unset by default; the focused pane alone, centred, until pressed again
+# zen_narrower = ""     # optional, e.g. "ctrl+shift+h"; only in zen mode, elsewhere the key reaches the pane
+# zen_wider = ""        # optional, e.g. "ctrl+shift+l"
 
 # Navigate-mode movement. These local shortcuts win while navigate mode is open.
 # They are independent from focus_pane_*. Do not include prefix+, esc, enter, tab, or 1..9 here.
@@ -277,6 +280,9 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Set false to reduce visible flashing when switching back to Herdr.
 # Trade-off: rare host terminal surface corruption may persist until the next full redraw.
 # redraw_on_focus_gained = true
+
+# Zen mode's width in columns, at least 40. The zen_narrower and zen_wider keys change it by 10.
+# zen_width = 150
 
 # Pane scrollback lines to scroll per mouse wheel notch.
 # mouse_scroll_lines = 3
