@@ -44,6 +44,24 @@ fn backgrounds(frame: &FrameData, rect: Rect) -> Vec<u32> {
         .collect()
 }
 
+fn underlined(frame: &FrameData, rect: Rect) -> Vec<bool> {
+    (rect.x..rect.right())
+        .map(|x| {
+            let modifier =
+                frame.cells[rect.y as usize * frame.width as usize + x as usize].modifier;
+            modifier & Modifier::UNDERLINED.bits() != 0
+        })
+        .collect()
+}
+
+/// A hovered sidebar row's background.
+fn hover_bg(state: &ClientShellState) -> u32 {
+    crate::protocol::color_to_u32(
+        crate::client::shell::row_hover::sidebar_hover_background(&state.config.palette)
+            .expect("a theme of RGB colours"),
+    )
+}
+
 /// Spaces `A/one` and `A/two` in group `A`, then `plain` and the focused `other`, so no row of
 /// the group has a background of its own.
 fn grouped_state() -> ClientShellState {
@@ -122,7 +140,7 @@ fn hovering_a_tab_or_space_row_highlights_it() {
     let frame = state.compose(140, 20).expect("frame");
     assert!(backgrounds(&frame, other_space)
         .iter()
-        .any(|bg| *bg == color(palette.selection_bg)));
+        .any(|bg| *bg == hover_bg(&state)));
     assert_eq!(
         backgrounds(&frame, other_tab),
         backgrounds(&plain, other_tab),
@@ -218,7 +236,7 @@ fn hovering_or_dragging_the_sidebar_divider_lights_it() {
 fn hovering_a_group_header_highlights_it_like_a_space_row() {
     let mut state = grouped_state();
     let plain = state.compose(140, 20).expect("frame");
-    let lit = crate::protocol::color_to_u32(state.config.palette.selection_bg);
+    let lit = hover_bg(&state);
     let header = group_header(&state, "A");
     let member = space(&state, "ws_1");
     assert!(!backgrounds(&plain, header).contains(&lit));
@@ -260,7 +278,7 @@ fn hovering_a_group_header_highlights_it_like_a_space_row() {
 fn a_folded_group_header_highlights_too() {
     let mut state = grouped_state();
     let plain = state.compose(140, 20).expect("frame");
-    let lit = crate::protocol::color_to_u32(state.config.palette.selection_bg);
+    let lit = hover_bg(&state);
     let header = group_header(&state, "A");
     let point = (header.x + 4, header.y);
     state.handle_raw_events(vec![moved(point.0, point.1)]);
@@ -319,4 +337,45 @@ fn nothing_is_highlighted_while_a_group_header_is_dragged() {
         backgrounds(&plain, target),
         "the row under the mouse is not lit"
     );
+}
+
+#[test]
+fn a_hovered_row_does_not_look_like_the_navigate_cursor() {
+    let navigating = |palette: Option<Palette>| {
+        let mut state = grouped_state();
+        if let Some(palette) = palette {
+            state.config.palette = palette;
+        }
+        state.mode = ClientShellMode::Navigate;
+        state.navigate_workspace_id = state.navigation_target(&ClientEndpointId::Local, "ws_3");
+        let plain = state.compose(140, 20).expect("frame");
+        let hovered = space(&state, "ws_2");
+        state.handle_raw_events(vec![moved(hovered.x + 4, hovered.y)]);
+        let frame = state.compose(140, 20).expect("frame");
+        let rows = [hovered, space(&state, "ws_3"), space(&state, "ws_4")];
+        (plain, frame, rows)
+    };
+
+    let (plain, frame, [hovered, cursor, active]) = navigating(None);
+    let lit = backgrounds(&frame, hovered);
+    assert_ne!(lit, backgrounds(&plain, hovered), "the hovered row is lit");
+    for (row, name) in [(cursor, "the Navigate cursor"), (active, "the active row")] {
+        let theirs = backgrounds(&frame, row);
+        assert!(
+            lit.iter().all(|bg| !theirs.contains(bg)),
+            "the hovered row looks like {name}"
+        );
+    }
+
+    // The terminal theme's active row and cursor share one grey: the hovered row keeps its
+    // background and is underlined instead.
+    let (plain, frame, [hovered, cursor, _]) =
+        navigating(Some(crate::app::state::Palette::terminal()));
+    assert_eq!(backgrounds(&frame, hovered), backgrounds(&plain, hovered));
+    assert!(underlined(&frame, hovered)
+        .iter()
+        .all(|&underlined| underlined));
+    assert!(!underlined(&frame, cursor)
+        .iter()
+        .any(|&underlined| underlined));
 }
