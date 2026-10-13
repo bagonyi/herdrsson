@@ -1,4 +1,5 @@
 use super::render::{display_width, put_right_text, put_text, ShellRenderState};
+use super::unseen_counts::{self, UnseenCounts};
 use super::*;
 
 fn collapsed_groups_for_endpoint<'a>(
@@ -67,6 +68,7 @@ pub(super) fn render_collapsed(
         let rect = Rect::new(workspace_area.x, y, workspace_area.width, 1);
         let active = &endpoint.endpoint_id == state.active_endpoint_id;
         let collapsed = state.collapsed_endpoints.contains(&endpoint.endpoint_id);
+        let unseen = UnseenCounts::of(endpoint);
         if skip > 0 {
             skip -= 1;
         } else {
@@ -92,7 +94,21 @@ pub(super) fn render_collapsed(
                 }),
             );
             let mut status_badge = Rect::default();
-            if !endpoint.endpoint_id.is_local() {
+            let waiting = if collapsed { unseen.total() } else { 0 };
+            if waiting > 0 && endpoint.endpoint_id.is_local() {
+                let count = if waiting > 9 {
+                    "9+".to_owned()
+                } else {
+                    waiting.to_string()
+                };
+                put_right_text(
+                    buffer,
+                    rect,
+                    rect.y,
+                    &count,
+                    unseen_counts::badge_style(palette),
+                );
+            } else if !endpoint.endpoint_id.is_local() {
                 let (glyph, _, color) = endpoint_status_presentation(endpoint.status, palette);
                 let width = display_width(glyph).min(rect.width);
                 status_badge = Rect::new(rect.right().saturating_sub(width), rect.y, width, 1);
@@ -159,19 +175,24 @@ pub(super) fn render_collapsed(
             } else {
                 Modifier::empty()
             };
+            let waiting = unseen.own(&workspace.workspace_id);
             put_text(
                 buffer,
                 rect.x,
                 rect.y,
                 number_width,
                 &number,
-                Style::default()
-                    .fg(if focused && !stale {
-                        palette.text
-                    } else {
-                        palette.overlay0
-                    })
-                    .add_modifier(dim),
+                if waiting > 0 && !stale {
+                    unseen_counts::badge_style(palette)
+                } else {
+                    Style::default()
+                        .fg(if focused && !stale {
+                            palette.text
+                        } else {
+                            palette.overlay0
+                        })
+                        .add_modifier(dim)
+                },
             );
             put_text(
                 buffer,
@@ -400,6 +421,11 @@ pub(super) fn render_expanded(
         .saturating_sub(metrics.offset_from_bottom);
     let show_scrollbar = metrics.max_offset_from_bottom > 0 && body.width > 1;
     let content_width = body.width.saturating_sub(u16::from(show_scrollbar));
+    let unseen = state
+        .endpoints
+        .iter()
+        .map(UnseenCounts::of)
+        .collect::<Vec<_>>();
     let mut y = body.y;
     for (row_index, row) in rows.iter().enumerate().skip(*state.workspace_scroll) {
         match row {
@@ -415,6 +441,10 @@ pub(super) fn render_expanded(
                     buffer,
                     rect,
                     marker,
+                    unseen
+                        .get(*index)
+                        .filter(|_| collapsed)
+                        .map_or(0, UnseenCounts::total),
                     endpoint,
                     collapsed && &endpoint.endpoint_id == state.active_endpoint_id,
                     state.machine_diagnostics,
@@ -436,6 +466,7 @@ pub(super) fn render_expanded(
                     .saturating_add(gaps.get(row_index).copied().unwrap_or(0));
             }
             Row::Workspace { endpoint, entry } => {
+                let unseen = unseen.get(*endpoint);
                 let endpoint = &state.endpoints[*endpoint];
                 let Some(snapshot) = endpoint.snapshot.as_deref() else {
                     continue;
@@ -471,6 +502,9 @@ pub(super) fn render_expanded(
                 let selected = state.selected_workspace_id.is_some_and(|target| {
                     target.matches(&endpoint.endpoint_id, &workspace.workspace_id)
                 });
+                let waiting = unseen.map_or(0, |unseen| {
+                    unseen.space(snapshot, workspace, collapsed_groups)
+                });
                 super::sidebar::render_workspace_rows(
                     buffer,
                     nested,
@@ -482,6 +516,9 @@ pub(super) fn render_expanded(
                     selected,
                     state.selected_workspace_id.is_some(),
                     false,
+                    unseen_counts::text_end(rect, waiting, || {
+                        super::sidebar::parent_group_key(snapshot, entry.index).is_some()
+                    }),
                     palette,
                 );
                 if endpoint.status != ClientEndpointStatus::Online {
@@ -498,6 +535,13 @@ pub(super) fn render_expanded(
                     snapshot,
                     entry.index,
                     collapsed_groups,
+                    palette,
+                );
+                unseen_counts::render_space_badge(
+                    buffer,
+                    rect,
+                    group_toggle.is_some(),
+                    waiting,
                     palette,
                 );
                 hits.workspaces.push(WorkspaceHit {
@@ -594,6 +638,7 @@ fn render_endpoint_row(
     buffer: &mut Buffer,
     rect: Rect,
     marker: &str,
+    unseen: usize,
     endpoint: &ClientShellEndpoint,
     highlighted: bool,
     auth: &super::machine_diagnostics::MachineDiagnostics,
@@ -620,11 +665,15 @@ fn render_endpoint_row(
         format!("{glyph} {state}")
     };
     let signal_width = display_width(&signal).min(rect.width);
+    let unseen_width = unseen_counts::badge_width(unseen).min(rect.width);
+    let right_width = signal_width
+        .saturating_add(unseen_width)
+        .saturating_add(u16::from(signal_width > 0 && unseen_width > 0));
     put_text(
         buffer,
         rect.x,
         rect.y,
-        rect.width.saturating_sub(signal_width.saturating_add(1)),
+        rect.width.saturating_sub(right_width.saturating_add(1)),
         &format!(" {marker} {}", endpoint.label),
         Style::default()
             .fg(
@@ -642,6 +691,14 @@ fn render_endpoint_row(
         rect.y,
         &signal,
         auth.badge_style(endpoint, palette, Style::default().fg(color)),
+    );
+    unseen_counts::render_badge(
+        buffer,
+        rect,
+        rect.right()
+            .saturating_sub(right_width.saturating_sub(unseen_width)),
+        unseen,
+        palette,
     );
     Rect::new(
         rect.right().saturating_sub(signal_width),
