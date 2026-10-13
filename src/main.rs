@@ -49,7 +49,6 @@ mod release_notes;
 mod remote;
 mod render_prof;
 mod render_signal;
-mod seen_flash;
 mod selection;
 mod server;
 mod session;
@@ -61,6 +60,7 @@ mod terminal_notify;
 mod terminal_theme;
 mod thread_spawn;
 mod ui;
+mod unseen_frame;
 mod update;
 mod workspace;
 mod worktree;
@@ -286,7 +286,8 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # zen_width = 150
 
 # Milliseconds a tab must stay on screen before its finished agents count as seen.
-# Passing a tab on the way to another leaves them unseen. 0 counts them as seen at once.
+# Their panes are framed in green until then. Passing a tab on the way to another
+# leaves them unseen. 0 counts them as seen at once.
 # seen_delay_ms = 1000
 
 # Pane scrollback lines to scroll per mouse wheel notch.
