@@ -10,7 +10,10 @@ impl ClientShellState {
             crate::input::KeybindMatch::Action(crate::input::KeybindAction::Detach) => {
                 outcome.detach = true;
             }
-            crate::input::KeybindMatch::Action(crate::input::KeybindAction::ToggleSidebar) => {
+            // Fork: zen mode hides the sidebar, so its key does nothing there.
+            crate::input::KeybindMatch::Action(crate::input::KeybindAction::ToggleSidebar)
+                if !self.zen_on() =>
+            {
                 self.sidebar_collapsed = !self.sidebar_collapsed;
                 self.sidebar_collapsed_manual = true;
                 self.reveal_navigation_workspace = true;
@@ -20,6 +23,9 @@ impl ClientShellState {
                 self.persist_chrome_preferences(outcome);
             }
             crate::input::KeybindMatch::Action(action) => {
+                if self.handle_zen(action, outcome) {
+                    return;
+                }
                 if self.workspace_preview_action_blocked()
                     && matches!(
                         action,

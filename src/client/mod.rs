@@ -789,6 +789,13 @@ async fn run_client_loop(
                 shell.timer_delay(std::time::Instant::now())
             });
         let timer_deadline = client_timer.deadline(std::time::Instant::now(), timer_delay);
+        // Fork: zen mode zooms the tab on screen, again after a split or a closed pane.
+        state.send_zen_zoom(
+            &pending_activation,
+            &mut scheduled_activation,
+            &mut endpoint_commands,
+            &mut write_stream,
+        )?;
         let immediate_event = scheduled_activation.take();
         #[cfg(windows)]
         let event = if let Some(event) = immediate_event {

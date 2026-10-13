@@ -21,7 +21,9 @@ fn restore_mode_bar(
 
 impl ClientShellState {
     fn compose_unavailable(&mut self, cols: u16, rows: u16) -> FrameData {
-        let layout = self.layout(cols, rows);
+        // Fork: the usual stand-in in zen mode too; zen mode's missing sidebar would stretch it
+        // across the window.
+        let layout = self.layout_outside_zen(cols, rows);
         let mut buffer = Buffer::empty(Rect::new(0, 0, cols, rows));
         buffer.set_style(
             buffer.area,
@@ -134,6 +136,7 @@ impl ClientShellState {
             false,
             &self.config.keybinds,
             &self.config.palette,
+            self.zen_on(),
         );
         if let Some(notice) = &self.visible_endpoint_notice {
             self.hits.notification_toast = endpoint_notices::render_notice(
@@ -172,6 +175,9 @@ impl ClientShellState {
                     && self.navigation_target_valid(&pending.target)
             });
         if self.snapshot.is_none() || self.pane_surface.is_none() {
+            if self.zen_holds_screen() {
+                return None;
+            }
             return Some(self.compose_unavailable(cols, rows).into());
         }
         let snapshot = self.snapshot.as_deref()?;
@@ -333,6 +339,7 @@ impl ClientShellState {
                 snapshot.update_available.is_some(),
                 &self.config.keybinds,
                 &self.config.palette,
+                self.zen_on(),
             )
         };
         if mode_bar == Some(layout.tab_bar) {
@@ -457,6 +464,11 @@ impl ClientShellState {
         restore_mode_bar(&mut frame, mode_bar, mode_bar_cells.as_deref());
         self.hits.notification_toast = Rect::default();
         let has_config_diagnostic = self.config_diagnostic.is_some();
+        // Fork: zen mode hides agent notifications.
+        let visible_notification = self
+            .visible_notification
+            .as_ref()
+            .filter(|_| !self.zen_on());
         let active_lifecycle = self
             .endpoints
             .iter()
@@ -466,7 +478,7 @@ impl ClientShellState {
         if has_config_diagnostic
             || active_lifecycle.is_some()
             || self.visible_endpoint_notice.is_some()
-            || self.visible_notification.is_some()
+            || visible_notification.is_some()
         {
             let cursor = frame.cursor.clone();
             let mut composed = frame.to_ratatui_buffer()?;
@@ -513,7 +525,7 @@ impl ClientShellState {
                         &self.config.palette,
                     )
                 };
-            } else if let Some(notification) = self.visible_notification.as_ref() {
+            } else if let Some(notification) = visible_notification {
                 self.hits.notification_toast = if layout.mobile_header.is_empty() {
                     notifications::render_visible_notification(
                         &mut composed,

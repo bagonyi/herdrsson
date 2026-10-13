@@ -671,8 +671,10 @@ impl ClientShellState {
 
         match self.mode {
             ClientShellMode::Terminal => {
+                // Fork: outside zen mode, its width keys reach the pane.
                 if let Some(binding) =
                     crate::input::resolve_direct_binding(&self.config.keybinds.keybinds, key)
+                        .filter(|binding| self.zen_binding_applies(binding))
                 {
                     self.record_binding(binding, outcome);
                     return None;
