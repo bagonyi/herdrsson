@@ -7672,6 +7672,8 @@ fn agent_finishing_in_active_tab_without_a_window_stays_unseen() {
 fn focused_window_seeing_finished_agents_emits_focus_events() {
     let event_hub = api::EventHub::default();
     let mut server = test_headless_server_with_event_hub(event_hub.clone());
+    // Seen as soon as shown; `seen_flash` tests the delay.
+    server.app.state.seen_delay = std::time::Duration::ZERO;
     server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("only")];
     server.app.state.ensure_test_terminals();
     server.app.state.active = Some(0);
@@ -7712,6 +7714,109 @@ fn focused_window_seeing_finished_agents_emits_focus_events() {
 
     server.sync_foreground_client_state();
     assert_eq!(focus_events().len(), 3, "nothing newly seen to announce");
+}
+
+fn focused_test_window(server: &mut HeadlessServer) {
+    let mut client = ClientConnection::new(
+        (80, 24),
+        Default::default(),
+        1,
+        RenderEncoding::SemanticFrame,
+        None,
+    );
+    client.outer_terminal_focus = Some(true);
+    server.clients.insert(1, client);
+    server.foreground_client_id = Some(1);
+    server.sync_foreground_client_state();
+}
+
+#[tokio::test]
+async fn focused_window_counts_finished_agents_as_seen_after_the_delay_and_announces_it() {
+    let event_hub = api::EventHub::default();
+    let mut server = test_headless_server_with_event_hub(event_hub.clone());
+    let delay = std::time::Duration::from_secs(1);
+    server.app.state.seen_delay = delay;
+    server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("only")];
+    server.app.state.ensure_test_terminals();
+    server.app.state.active = Some(0);
+    let pane_id = server.app.state.workspaces[0].tabs[0].root_pane;
+    server.app.state.workspaces[0]
+        .panes
+        .get_mut(&pane_id)
+        .unwrap()
+        .seen = false;
+    let focus_events = || {
+        event_hub
+            .events_after(0)
+            .into_iter()
+            .map(|(_, event)| event.event)
+            .collect::<Vec<_>>()
+    };
+
+    let set_focus = |server: &mut HeadlessServer, focused: bool| {
+        server.clients.get_mut(&1).unwrap().outer_terminal_focus = Some(focused);
+        server.sync_foreground_client_state();
+    };
+
+    // The window comes back: the wait starts and the frame shows, but nothing is seen yet.
+    focused_test_window(&mut server);
+    let now = Instant::now();
+    server.handle_scheduled_tasks_headless(now, false);
+    assert!(!server.app.state.workspaces[0].panes[&pane_id].seen);
+    assert!(server.app.state.pane_has_seen_flash(0, pane_id));
+    assert_eq!(focus_events(), []);
+
+    // In the background before the delay is up: the wait ends and the frame goes.
+    set_focus(&mut server, false);
+    assert!(server.handle_scheduled_tasks_headless(now + delay / 2, false));
+    assert!(!server.app.state.workspaces[0].panes[&pane_id].seen);
+    assert!(!server.app.state.pane_has_seen_flash(0, pane_id));
+
+    // Back again, the wait starts over.
+    set_focus(&mut server, true);
+    let back = Instant::now();
+    server.handle_scheduled_tasks_headless(back, false);
+    assert!(!server.app.state.workspaces[0].panes[&pane_id].seen);
+    assert!(server.handle_scheduled_tasks_headless(back + delay, false));
+    assert!(server.app.state.workspaces[0].panes[&pane_id].seen);
+    // Announced the way coming back would announce agents seen at once.
+    assert_eq!(
+        focus_events(),
+        [
+            api::schema::EventKind::WorkspaceFocused,
+            api::schema::EventKind::TabFocused,
+            api::schema::EventKind::PaneFocused,
+        ]
+    );
+    server.handle_scheduled_tasks_headless(back + delay, false);
+    assert_eq!(focus_events().len(), 3, "nothing newly seen to announce");
+}
+
+#[test]
+fn agent_finishing_in_the_focused_windows_tab_counts_as_seen_at_once_despite_the_delay() {
+    let mut server = test_headless_server();
+    server.app.state.seen_delay = std::time::Duration::from_secs(1);
+    server.app.state.workspaces = vec![crate::workspace::Workspace::test_new("only")];
+    server.app.state.ensure_test_terminals();
+    server.app.state.active = Some(0);
+    focused_test_window(&mut server);
+    let pane_id = server.app.state.workspaces[0].tabs[0].root_pane;
+    let public_pane_id = server.app.public_pane_id(0, pane_id).unwrap();
+
+    report_test_agent_state(
+        &mut server,
+        &public_pane_id,
+        1,
+        api::schema::PaneAgentState::Working,
+    );
+    report_test_agent_state(
+        &mut server,
+        &public_pane_id,
+        2,
+        api::schema::PaneAgentState::Idle,
+    );
+
+    assert!(server.app.state.workspaces[0].panes[&pane_id].seen);
 }
 
 #[test]
