@@ -1111,7 +1111,7 @@ impl ClientShellState {
             reveal_navigation_workspace: false,
             overlay,
             previous_pane_id: None,
-            zen: super::zen::ZenMode::new(preferences.zen_width),
+            zen: super::zen::ZenMode::new(preferences.zen_width, preferences.zen_zooms),
             recent_focus: Default::default(),
             pane_mouse_gesture: None,
             link_hover: None,

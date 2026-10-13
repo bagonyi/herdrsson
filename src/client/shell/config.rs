@@ -62,6 +62,7 @@ impl ClientShellState {
             collapsed_groups,
             remote_collapsed_groups,
             zen_width: self.zen.saved_width(),
+            zen_zooms: self.zen.saved_zooms(),
         };
         if let Err(error) = preferences::store(path, preferences) {
             self.set_endpoint_error(error);

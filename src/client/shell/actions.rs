@@ -504,6 +504,10 @@ impl ClientShellState {
         let Some(pending) = self.pending_requests.remove(request_id) else {
             return (false, Vec::new());
         };
+        // Fork: zen mode's zooms answer to zen mode.
+        if self.zen_answer(boot_id, request_id, &pending.method_name, &result) {
+            return (false, Vec::new());
+        }
         if pending.boot_id != boot_id
             || self
                 .snapshot
