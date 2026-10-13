@@ -309,6 +309,10 @@ pub(super) fn render_shell(
                 state
                     .selected_workspace_id
                     .map(|target| target.workspace_id.as_str()),
+                &super::unseen_counts::UnseenCounts::of_endpoint(
+                    state.endpoints,
+                    state.active_endpoint_id,
+                ),
                 &mut hits,
             );
         } else {

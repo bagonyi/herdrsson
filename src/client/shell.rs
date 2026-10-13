@@ -36,6 +36,7 @@ mod space_groups;
 mod state;
 mod surface_patch;
 mod text_editor;
+mod unseen_counts;
 mod word_selection;
 mod worktrees;
 mod zen;
