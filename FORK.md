@@ -3,8 +3,8 @@
 Herdrsson ("son of Herdr" in Icelandic) is a personal fork of
 [herdrdev/herdr](https://github.com/herdrdev/herdr). It's unofficial: the Herdr project doesn't
 make or endorse it. The `herdrsson` branch is Herdr's code with the changes below on top: usually
-the latest Herdr release, currently Herdr's code of 2026-10-08 (after 0.9.3). Everything else is
-stock Herdr; see the [README](README.md) and [herdr.dev/docs](https://herdr.dev/docs/).
+the latest Herdr release, currently 0.9.5. Everything else is stock Herdr; see the
+[README](README.md) and [herdr.dev/docs](https://herdr.dev/docs/).
 
 It installs and runs as `herdr`, with Herdr's config folder, plugins and agent integrations, so
 the `herdr` commands and `~/.config/herdr/config.toml` below are right as written.
@@ -213,7 +213,7 @@ released, and the Herdr release it's built on.
 
 ```
 $ herdr --version
-herdrsson 2026.10.14 (based on herdr 0.9.3)
+herdrsson 2026.10.25 (based on herdr 0.9.5)
 ```
 
 A second release on the same day ends in `.2`. Moving onto a new Herdr release changes only the
@@ -229,6 +229,8 @@ uses the Herdr number.
   space groups by name, and zen mode. The green frame now shows while a finished agent waits,
   instead of for 2 seconds once it's looked at, and a pane hidden behind its tab's zoom no longer
   counts as looked at.
+- 2026.10.25 (on Herdr 0.9.5): back on a Herdr release, with the fixes of Herdr 0.9.4 and 0.9.5.
+  Nothing new of its own.
 
 ## caveats
 
@@ -251,8 +253,7 @@ Herdr is licensed under the [Apache License 2.0](LICENSE). Herdr is the upstream
 Herdrsson uses it only to say where it comes from. This fork changes files under `src/`, adds a
 note at the top of `README.md`, and adds this file and `HERDRSSON_VERSION`. Each change is a
 separate commit on top of Herdr's code, usually a release tag. This fork doesn't carry the tags,
-so fetch them from Herdr to list the commits and every changed file (while the branch isn't on a
-tag, as now, use `base=2563803d`):
+so fetch them from Herdr to list the commits and every changed file:
 
 ```bash
 git remote add upstream https://github.com/herdrdev/herdr
