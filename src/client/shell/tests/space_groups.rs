@@ -1544,6 +1544,25 @@ fn apply_renames(state: &mut ClientShellState, renames: &[(String, String)]) {
 }
 
 #[test]
+fn ctrl_clicking_a_group_header_opens_its_menu() {
+    let mut state = grouped_state(named_spaces(&["A/one", "A/two", "plain"]));
+    state.compose(106, 30).expect("composed frame");
+    let point = header_point(&state, "A");
+    let press = state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: point.0,
+        row: point.1,
+        modifiers: KeyModifiers::CONTROL,
+    })]);
+    assert!(press.actions.is_empty() && press.repaint);
+    assert!(matches!(
+        open_menu(&state).0,
+        ClientContextMenuTarget::SpaceGroup { name, collapsed: false } if name == "A"
+    ));
+    assert!(state.collapsed_groups.is_empty(), "the press doesn't fold");
+}
+
+#[test]
 fn right_clicking_a_group_header_opens_its_menu() {
     let mut state = grouped_state(focused_on(
         named_spaces(&["A/one", "A/two", "plain"]),
