@@ -940,6 +940,8 @@ pub(crate) struct ClientShellState {
     pub(super) link_hover: Option<super::link_hover::LinkHover>,
     pub(super) row_hover: Option<(u16, u16)>,
     pub(super) url_click_consumes_until_up: bool,
+    /// A ctrl+click outside terminal content is down and taken as a right click.
+    pub(super) ctrl_click_held: bool,
     /// The host terminal reports key releases (Kitty event types), so text
     /// presses can be tracked until their release arrives.
     pub(super) host_reports_key_releases: bool,
@@ -1118,6 +1120,7 @@ impl ClientShellState {
             link_hover: None,
             row_hover: None,
             url_click_consumes_until_up: false,
+            ctrl_click_held: false,
             host_reports_key_releases: false,
             host_erase_is_ctrl_h: false,
             host_reports_all_keys: false,
@@ -1326,6 +1329,7 @@ impl ClientShellState {
         self.pane_mouse_gesture = None;
         self.link_hover = None;
         self.url_click_consumes_until_up = false;
+        self.ctrl_click_held = false;
         self.replaying_url_click = false;
         self.selection = None;
         self.last_pane_click = None;
