@@ -2,6 +2,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::detect::{Agent, AgentDetection, AgentState};
 
+mod blocked_hold;
+
 pub(super) const AGENT_PENDING_IDLE_RECHECK: std::time::Duration =
     std::time::Duration::from_millis(100);
 const AGENT_PENDING_IDLE_CONFIRMATIONS: u8 = 3;
@@ -24,16 +26,19 @@ pub(super) struct DetectionPublishState {
 pub(super) struct PendingIdleConfirmation {
     started_at: Option<std::time::Instant>,
     confirmations: u8,
+    // Fork: see blocked_hold.rs.
+    blocked_since: Option<std::time::Instant>,
 }
 
 impl PendingIdleConfirmation {
     pub(super) fn active(&self) -> bool {
-        self.started_at.is_some()
+        self.started_at.is_some() || self.blocked_since.is_some()
     }
 
     pub(super) fn clear(&mut self) {
         self.started_at = None;
         self.confirmations = 0;
+        self.blocked_since = None;
     }
 
     pub(super) fn should_hold_working_to_idle(
@@ -231,6 +236,17 @@ pub(super) fn decide_detection_transition(
     input: DetectionTransitionInput,
     pending_idle: &mut PendingIdleConfirmation,
 ) -> DetectionTransitionDecision {
+    // Fork: checked first, as the idle check below clears every hold it doesn't apply to.
+    if pending_idle.should_hold_plain_blocked(
+        input.previous_publish,
+        input.next_publish,
+        input.agent_changed,
+        input.process_exited,
+        input.now,
+    ) {
+        return DetectionTransitionDecision::NoPublish;
+    }
+
     if pending_idle.should_hold_working_to_idle(
         input.previous_publish,
         input.next_publish,
