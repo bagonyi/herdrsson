@@ -102,6 +102,16 @@ pub struct SidebarTokenStyle {
     pub fg: Option<SidebarTokenColor>,
     pub bold: Option<bool>,
     pub dim: Option<bool>,
+    /// Fork: how a custom token's value is shown (`format = "ago"`). Rules can't change it.
+    pub format: Option<SidebarTokenFormat>,
+}
+
+/// Fork: `ago` shows a custom token holding a Unix time in seconds as the time since then,
+/// e.g. `5m ago` (see `crate::ui::sidebar::ago`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SidebarTokenFormat {
+    Ago,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,6 +192,8 @@ struct RawStyledSidebarToken {
     dim: Option<bool>,
     #[serde(default)]
     rules: Vec<SidebarTokenRule>,
+    #[serde(default)]
+    format: Option<SidebarTokenFormat>,
 }
 
 #[derive(Deserialize)]
@@ -204,12 +216,16 @@ impl RawSidebarToken {
                 {
                     return Err("sidebar rules require a text-valued token".into());
                 }
+                if token.format.is_some() && !token.token.starts_with('$') {
+                    return Err("sidebar token format applies only to custom `$` tokens".into());
+                }
                 Ok((
                     token.token,
                     Some(SidebarTokenStyle {
                         fg: token.fg,
                         bold: token.bold,
                         dim: token.dim,
+                        format: token.format,
                     }),
                     token.rules,
                 ))
@@ -264,6 +280,9 @@ where
     }
     if !rules.is_empty() {
         map.serialize_entry("rules", rules)?;
+    }
+    if let Some(format) = style.format {
+        map.serialize_entry("format", &format)?;
     }
     map.end()
 }

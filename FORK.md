@@ -102,6 +102,11 @@ space's name. If Herdr ever gets groups of its own, this fork will drop these an
   it. A tab cut short at the edge counts as hidden. Stock Herdr's arrows only show whether you
   can scroll.
 - The agents panel can be hidden, giving the spaces list the whole sidebar.
+- A custom token in an agent or space row can show a Unix time in seconds as the time since
+  then, counting up as you watch: `10s ago` (in steps of 10 seconds), `5m ago`, `3h ago`,
+  `2d ago`. While an agent works, its row says `working` instead. Write it as
+  `{ token = "$last_at", format = "ago" }`; its rules match that text. Stock Herdr shows the
+  number.
 - Notifications leave out the 🟢 ⏳ 🟠 marker that [Tab Status](https://github.com/bagonyi/herdr-tab-status)
   puts in front of a tab's name. The plugin changes it only after the notification is made, so a
   "finished" notification would still show ⏳.

@@ -70,6 +70,11 @@ impl ClientShellState {
         }
     }
 
+    /// Fork: whether a sidebar row showing a time as `ago` needs a repaint for a new second.
+    pub(crate) fn tick_ago(&self, last_second: &mut u64) -> bool {
+        crate::ui::sidebar_ago_changed(&self.config.agents, &self.config.spaces, last_second)
+    }
+
     pub(crate) fn reload_client_config(&mut self) {
         match crate::config::load_live_config() {
             Ok(loaded) => {
