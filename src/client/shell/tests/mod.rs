@@ -261,6 +261,8 @@ mod keybindings_settings;
 mod link_hover;
 mod mobile;
 mod mouse_selection;
+// Fork: a tab's "Move to space" menu.
+mod move_to_space;
 mod popup_focus_projection;
 mod row_hover;
 mod sidebar_and_tab_bar;

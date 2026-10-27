@@ -543,6 +543,9 @@ pub(super) enum ClientContextMenuAction {
     JoinGroup(usize),
     NewGroup,
     LeaveGroup,
+    // A tab's "Move to space" and the second menu it opens (`move_to_space`).
+    MoveToSpace,
+    JoinSpace(usize),
 }
 
 #[derive(Debug)]
@@ -560,6 +563,8 @@ pub(super) enum ClientContextMenuTarget {
     Tab {
         tab_id: String,
         workspace_id: String,
+        /// Offers "Move to space" (`move_to_space`).
+        move_to_space: bool,
     },
     Pane {
         pane_id: String,
@@ -575,6 +580,12 @@ pub(super) enum ClientContextMenuTarget {
         workspace_id: String,
         groups: Vec<String>,
         in_group: bool,
+    },
+    /// A tab's "Move to space" menu: `spaces` are the other spaces' IDs and names
+    /// (`move_to_space`).
+    MoveToSpace {
+        tab_id: String,
+        spaces: Vec<(String, String)>,
     },
 }
 

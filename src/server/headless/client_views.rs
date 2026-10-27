@@ -234,6 +234,8 @@ impl HeadlessServer {
                 | Method::PaneSplit(_)
                 | Method::TabClose(_)
                 | Method::TabCreate(_)
+                // Fork: a tab moving to another space (`tab.move_to_workspace`).
+                | Method::TabMoveToWorkspace(_)
                 | Method::WorkspaceClose(_)
                 | Method::WorkspaceCreate(_)
                 | Method::WorktreeCreate(_)
@@ -270,6 +272,8 @@ impl HeadlessServer {
                 | Method::TabCreate(_)
                 | Method::TabFocus(_)
                 | Method::TabMove(_)
+                // Fork: a tab moving to another space (`tab.move_to_workspace`).
+                | Method::TabMoveToWorkspace(_)
                 | Method::TabRename(_)
                 | Method::WorkspaceClose(_)
                 | Method::WorkspaceCreate(_)
@@ -303,6 +307,8 @@ impl HeadlessServer {
                 | Method::PluginPaneOpen(_)
                 | Method::TabClose(_)
                 | Method::TabCreate(_)
+                // Fork: a tab moving to another space (`tab.move_to_workspace`).
+                | Method::TabMoveToWorkspace(_)
                 | Method::TabFocus(_)
                 | Method::WorkspaceClose(_)
                 | Method::WorkspaceCreate(_)
@@ -854,6 +860,8 @@ impl HeadlessServer {
         let create_focus_requested = match &msg.request.method {
             api::schema::Method::WorkspaceCreate(params) => params.focus,
             api::schema::Method::TabCreate(params) => params.focus,
+            // Fork: a tab moving to another space with focus follows it there.
+            api::schema::Method::TabMoveToWorkspace(params) => params.focus,
             _ => false,
         };
         let inspect_pane_move = matches!(

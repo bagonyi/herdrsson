@@ -36,6 +36,16 @@ pub struct TabMoveParams {
     pub insert_index: usize,
 }
 
+// Fork: a tab's "Move to space" menu.
+/// Moves a tab with its layout and running panes to the end of another workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TabMoveToWorkspaceParams {
+    pub tab_id: String,
+    pub workspace_id: String,
+    #[serde(default)]
+    pub focus: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TabInfo {
     pub tab_id: String,

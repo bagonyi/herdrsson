@@ -25,6 +25,8 @@ mod input_source;
 mod link_hover;
 mod mobile;
 mod mouse;
+// Fork: a tab's "Move to space" menu.
+mod move_to_space;
 mod notification_policy;
 mod notifications;
 mod overlay_input;
