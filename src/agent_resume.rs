@@ -2,6 +2,10 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+// Herdrsson: see recency.rs.
+mod recency;
+pub use recency::last_message_stamp;
+
 const MAX_SESSION_ID_LEN: usize = 512;
 const MAX_SESSION_PATH_LEN: usize = 4096;
 const MAX_RESUME_ARGS: usize = 64;
