@@ -18,6 +18,8 @@ use crate::terminal::{TerminalId, TerminalRuntime, TerminalRuntimeRegistry, Term
 mod aggregate;
 mod git;
 mod tab;
+// Fork: whole tabs moving between workspaces.
+mod tab_move;
 
 use self::git::git_status_cache_key_for_space;
 pub(crate) use self::{git::git_status_snapshot_for_cwd_with_demand, tab::MovedPane};

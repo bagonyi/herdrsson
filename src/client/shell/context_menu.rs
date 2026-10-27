@@ -88,8 +88,12 @@ impl ClientContextMenuOverlay {
             ClientContextMenuTarget::MoveToGroup {
                 groups, in_group, ..
             } => super::space_groups::move_menu_items(groups, *in_group),
+            ClientContextMenuTarget::MoveToSpace { spaces, .. } => {
+                super::move_to_space::move_menu_items(spaces)
+            }
         };
-        super::space_groups::with_move_to_group(&self.target, items)
+        let items = super::space_groups::with_move_to_group(&self.target, items);
+        super::move_to_space::with_move_to_space(&self.target, items)
     }
 }
 
@@ -135,17 +139,17 @@ impl ClientShellState {
     }
 
     pub(super) fn open_tab_context_menu(&mut self, tab_id: String, x: u16, y: u16) {
-        let Some(tab) = self
-            .snapshot
-            .as_deref()
-            .and_then(|snapshot| snapshot.tabs.iter().find(|tab| tab.tab_id == tab_id))
-        else {
+        let Some(snapshot) = self.snapshot.as_deref() else {
+            return;
+        };
+        let Some(tab) = snapshot.tabs.iter().find(|tab| tab.tab_id == tab_id) else {
             return;
         };
         self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
             target: ClientContextMenuTarget::Tab {
                 tab_id,
                 workspace_id: tab.workspace_id.clone(),
+                move_to_space: super::move_to_space::can_move_to_space(snapshot, &tab.workspace_id),
             },
             x,
             y,
@@ -213,9 +217,15 @@ impl ClientShellState {
                 close_group,
                 ..
             } => self.activate_workspace_context_action(workspace_id, close_group, action, outcome),
+            ClientContextMenuTarget::Tab { tab_id, .. }
+                if action == ClientContextMenuAction::MoveToSpace =>
+            {
+                self.open_move_to_space_menu(tab_id, menu.x, menu.y)
+            }
             ClientContextMenuTarget::Tab {
                 tab_id,
                 workspace_id,
+                ..
             } => self.activate_tab_context_action(tab_id, workspace_id, action, outcome),
             ClientContextMenuTarget::Pane {
                 pane_id,
@@ -239,6 +249,9 @@ impl ClientShellState {
                 groups,
                 ..
             } => self.activate_move_to_group_action(workspace_id, &groups, action, outcome),
+            ClientContextMenuTarget::MoveToSpace { tab_id, spaces } => {
+                self.activate_move_to_space_action(tab_id, &spaces, action, outcome)
+            }
         }
         outcome.repaint = true;
     }

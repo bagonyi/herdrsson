@@ -254,6 +254,11 @@ mod tests {
             actual.remove("pane.link.resolve").as_deref(),
             Some("f5e4a3e01453ae7b188f127ce951c12c20e0bebcc17cc364eeb6d1a01fd5bf81")
         );
+        // Fork: a tab's "Move to space" menu.
+        assert_eq!(
+            actual.remove("tab.move_to_workspace").as_deref(),
+            Some("c30ea11349ce65eec3d238dfd8f3ce5351768e33f381c06d4204de424ea2f633")
+        );
 
         assert_eq!(
             actual, expected,

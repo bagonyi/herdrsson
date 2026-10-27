@@ -170,6 +170,8 @@ mod tests {
             "tab.focus",
             "tab.rename",
             "tab.move",
+            // Fork: a tab's "Move to space" menu.
+            "tab.move_to_workspace",
             "tab.close",
             "layout.apply",
             "layout.set_split_ratio",

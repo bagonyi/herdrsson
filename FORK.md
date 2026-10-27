@@ -122,6 +122,16 @@ space's name. If Herdr ever gets groups of its own, this fork will drop these an
   stock Herdr treats it as a plain click there. On a pane's contents ctrl+click still opens
   links and reaches the program, and in an open menu or dialog it's a click.
 
+### tabs
+
+- Right-clicking a tab offers "Move to space": the other spaces, in sidebar order, by their full
+  names. The tab moves to the end of the space you pick with its splits, zoom, name and running
+  programs, and the window follows it there. Moving a space's last tab closes that space. Stock
+  Herdr moves only single panes, and only with `herdr pane move`.
+- The server does it as `tab.move_to_workspace` (`tab_id`, `workspace_id`, `focus`). As after
+  `herdr pane move`, the tab's panes get IDs in their new space and the old IDs keep working. A
+  server started before this version says it doesn't support the move yet; restart it.
+
 ### keys
 
 - `last_tab` goes back to the tab you had open before this one in the same space, and
@@ -259,10 +269,11 @@ uses the Herdr number.
 ## license
 
 Herdr is licensed under the [Apache License 2.0](LICENSE). Herdr is the upstream project's name;
-Herdrsson uses it only to say where it comes from. This fork changes files under `src/`, adds a
-note at the top of `README.md`, and adds this file and `HERDRSSON_VERSION`. Each change is a
-separate commit on top of Herdr's code, usually a release tag. This fork doesn't carry the tags,
-so fetch them from Herdr to list the commits and every changed file:
+Herdrsson uses it only to say where it comes from. This fork changes files under `src/` and the
+API schema generated from them (`docs/next/api/`), adds a note at the top of `README.md`, and adds
+this file and `HERDRSSON_VERSION`. Each change is a separate commit on top of Herdr's code,
+usually a release tag. This fork doesn't carry the tags, so fetch them from Herdr to list the
+commits and every changed file:
 
 ```bash
 git remote add upstream https://github.com/herdrdev/herdr
