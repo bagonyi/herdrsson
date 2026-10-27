@@ -192,3 +192,51 @@ fn hidden_agents_panel_leaves_space_groups_the_full_height() {
     }
     assert!(hidden.collapsed_groups.contains("group:G10"));
 }
+
+#[test]
+fn agents_header_shows_how_many_agents_it_lists() {
+    let agent = |pane_id: &str| ClientShellAgent {
+        pane_id: pane_id.into(),
+        workspace_id: "ws_1".into(),
+        tab_id: "tab_1".into(),
+        name: None,
+        display_agent: None,
+        agent: Some("pi".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status: AgentStatus::Idle,
+        state_change_seq: 1,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused: false,
+    };
+    let header = |projected: &ClientShellSnapshot| {
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+        state.set_snapshot(Box::new(projected.clone()));
+        state.set_pane_surface(surface());
+        let frame = state.compose(106, 30).expect("expanded sidebar");
+        frame
+            .cells
+            .chunks(frame.width as usize)
+            .map(|row| {
+                row.iter()
+                    .map(|cell| cell.symbol.as_str())
+                    .collect::<String>()
+            })
+            .find(|row| row.starts_with(" agents"))
+            .expect("agents header")
+    };
+
+    let mut projected = snapshot();
+    assert!(header(&projected).starts_with(" agents · 0 "));
+    projected.agents = vec![agent("pane_a"), agent("pane_b"), agent("pane_c")];
+    assert!(header(&projected).starts_with(" agents · 3 "));
+
+    projected.agent_view_label = Some("recent".into());
+    projected.agent_order = vec!["pane_c".into(), "pane_a".into()];
+    assert!(
+        header(&projected).starts_with(" agents · 2 "),
+        "a plugin's agent view counts the agents it lists"
+    );
+}
