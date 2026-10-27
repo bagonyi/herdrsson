@@ -54,7 +54,8 @@ impl App {
         if self.next_agent_resume_at.is_some_and(|next| now < next) {
             return false;
         }
-        let pending = self.pending_agent_resume_candidates();
+        let mut pending = self.pending_agent_resume_candidates();
+        self.sort_by_last_message(&mut pending);
         let mut changed = false;
         for PendingAgentResumeCandidate {
             pane_id,
@@ -92,8 +93,32 @@ impl App {
         }
         if !self.has_pending_agent_resumes() {
             self.next_agent_resume_at = None;
+            self.agent_resume_last_message.clear();
         }
         changed
+    }
+
+    /// Herdrsson: the agent whose conversation had the latest message starts
+    /// first; agents Herdr can't date follow in sidebar order. Each
+    /// conversation is read once, as this runs on every check while agents wait.
+    fn sort_by_last_message(&mut self, pending: &mut [PendingAgentResumeCandidate]) {
+        let terminals = &self.state.terminals;
+        for candidate in pending.iter() {
+            self.agent_resume_last_message
+                .entry(candidate.terminal_id.clone())
+                .or_insert_with(|| {
+                    terminals
+                        .get(&candidate.terminal_id)
+                        .and_then(|terminal| terminal.persisted_agent_session.as_ref())
+                        .and_then(crate::agent_resume::last_message_stamp)
+                });
+        }
+        let last_message = &self.agent_resume_last_message;
+        pending.sort_by(|a, b| {
+            last_message
+                .get(&b.terminal_id)
+                .cmp(&last_message.get(&a.terminal_id))
+        });
     }
 
     fn pending_agent_resume_candidates(&self) -> Vec<PendingAgentResumeCandidate> {
@@ -475,6 +500,73 @@ mod tests {
                 4
             );
         }
+    }
+
+    #[tokio::test]
+    async fn pending_agent_resumes_start_latest_conversation_first() {
+        let config: crate::config::Config =
+            toml::from_str("[session]\nstartup_per_agent_delay_ms = 100").unwrap();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &config,
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+        app.state.workspaces = (0..4)
+            .map(|_| crate::workspace::Workspace::test_new("restore"))
+            .collect();
+        app.state.active = Some(0);
+        app.state.view.terminal_area = Rect::new(0, 0, 100, 30);
+        app.state.ensure_test_terminals();
+        // A missing directory makes a start fail at once, without a shell.
+        let missing = std::env::current_dir()
+            .unwrap()
+            .join("__missing_resume_cwd__");
+        assert!(!missing.exists());
+        let terminal_ids: Vec<_> = app
+            .state
+            .workspaces
+            .iter()
+            .map(|ws| ws.terminal_id(ws.tabs[0].root_pane).unwrap().clone())
+            .collect();
+        // In sidebar order: undated, oldest, newest, middle.
+        let stamps = [
+            None,
+            Some("2026-10-25T08:00:00.000Z"),
+            Some("2026-10-27T09:00:00.000Z"),
+            Some("2026-10-26T12:00:00.000Z"),
+        ];
+        for (terminal_id, stamp) in terminal_ids.iter().zip(stamps) {
+            let terminal = app.state.terminals.get_mut(terminal_id).unwrap();
+            terminal.cwd = missing.clone();
+            terminal.pending_agent_resume_plan = Some(crate::agent_resume::AgentResumePlan {
+                agent: "claude".into(),
+                argv: vec!["claude".into()],
+                dedupe_key: terminal_id.to_string(),
+            });
+            app.agent_resume_last_message
+                .insert(terminal_id.clone(), stamp.map(String::from));
+        }
+
+        let now = Instant::now();
+        let mut started = Vec::new();
+        for step in 0..4 {
+            assert!(
+                app.start_pending_agent_resumes(now + std::time::Duration::from_secs(step), true)
+            );
+            let newly_started = (0..terminal_ids.len()).find(|index| {
+                !started.contains(index)
+                    && app.state.terminals[&terminal_ids[*index]]
+                        .restore_error
+                        .is_some()
+            });
+            started.push(newly_started.unwrap());
+        }
+        assert_eq!(started, [2, 3, 1, 0]);
+        assert!(!app.has_pending_agent_resumes());
+        assert!(app.agent_resume_last_message.is_empty());
     }
 
     #[cfg(unix)]

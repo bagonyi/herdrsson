@@ -144,6 +144,8 @@ pub struct App {
     pane_host_appearance: Option<crate::terminal_theme::HostAppearance>,
     startup_per_agent_delay: Duration,
     next_agent_resume_at: Option<Instant>,
+    // Herdrsson: see agent_resume.rs.
+    agent_resume_last_message: HashMap<crate::terminal::TerminalId, Option<String>>,
     pub(crate) session_save_deadline: Option<Instant>,
     pub(crate) session_save_thread: Option<std::thread::JoinHandle<()>>,
     session_writer: Arc<std::sync::Mutex<crate::persist::SessionWriter>>,
@@ -661,6 +663,7 @@ impl App {
                 config.session.startup_per_agent_delay_ms.into(),
             ),
             next_agent_resume_at: None,
+            agent_resume_last_message: HashMap::new(),
             session_save_deadline: None,
             session_save_thread: None,
             session_writer,

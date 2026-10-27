@@ -112,6 +112,10 @@ space's name. If Herdr ever gets groups of its own, this fork will drop these an
 - Notifications leave out the 🟢 ⏳ 🟠 marker that [Tab Status](https://github.com/bagonyi/herdr-tab-status)
   puts in front of a tab's name. The plugin changes it only after the notification is made, so a
   "finished" notification would still show ⏳.
+- After a server restart, agents come back latest first: the Claude conversation with the newest
+  message starts first, and agents without one follow in sidebar order. With
+  `startup_per_agent_delay_ms` set to a few seconds, the agents you were using are back in
+  moments while the rest trickle in. Stock Herdr starts them in sidebar order.
 
 ### mouse
 
