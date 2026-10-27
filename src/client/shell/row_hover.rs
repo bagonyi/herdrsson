@@ -11,7 +11,7 @@ enum HoveredRow {
 }
 
 impl ClientShellState {
-    /// Tracks the mouse so the tab, machine, space or space-group header row under it is
+    /// Tracks the mouse so the tab, machine, space, space-group header or agent row under it is
     /// highlighted, as is the sidebar divider to show it can be dragged. Only motion and drags
     /// move the highlight; terminals report motion before a click or scroll at a new spot.
     pub(super) fn update_row_hover(&mut self, mouse: MouseEvent, outcome: &mut ClientShellInput) {
@@ -51,6 +51,8 @@ impl ClientShellState {
         let sidebar = (self.hits.machines.iter().map(|hit| hit.rect))
             .chain(self.hits.workspaces.iter().map(|hit| hit.rect))
             .chain(self.hits.group_headers.iter().map(|hit| hit.rect))
+            .chain(self.hits.agents.iter().map(|(rect, _)| *rect))
+            .chain(self.hits.endpoint_agents.iter().map(|(rect, _, _)| *rect))
             .map(HoveredRow::Sidebar);
         tabs.chain(sidebar)
             .chain([HoveredRow::SidebarDivider(divider)])
