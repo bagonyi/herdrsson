@@ -102,6 +102,8 @@ space's name. If Herdr ever gets groups of its own, this fork will drop these an
   it. A tab cut short at the edge counts as hidden. Stock Herdr's arrows only show whether you
   can scroll.
 - The agents panel can be hidden, giving the spaces list the whole sidebar.
+- The agents panel's title shows how many agents it lists, `agents · 24`, counting only those a
+  plugin's agent view shows.
 - A custom token in an agent or space row can show a Unix time in seconds as the time since
   then, counting up as you watch: `10s ago` (in steps of 10 seconds), `5m ago`, `3h ago`,
   `2d ago`. While an agent works, its row says `working` instead. Write it as

@@ -52,16 +52,17 @@ pub(super) fn render_expanded(
     agent_scroll: &mut usize,
     hits: &mut ShellHitMap,
 ) {
+    let rows = agent_rows(endpoints, active_endpoint_id, config);
     if !super::agent_sidebar::render_agent_panel_header(
         buffer,
         area,
         agent_view_label,
+        rows.len(),
         config,
         hits,
     ) {
         return;
     }
-    let rows = agent_rows(endpoints, active_endpoint_id, config);
     super::agent_sidebar::render_agent_list(
         buffer,
         area,
