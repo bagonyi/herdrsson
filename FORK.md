@@ -130,9 +130,10 @@ space's name. If Herdr ever gets groups of its own, this fork will drop these an
 
 ### mouse
 
-- The tab, space row or group header under the mouse gets a lighter background. A sidebar row's
-  sits halfway between the current row's colour and Navigate mode's cursor, so it reads as
-  neither; in the `terminal` theme, which has no colours to mix, the row is underlined instead.
+- The tab, space row, group header or agent row under the mouse gets a lighter background. A
+  sidebar row's sits halfway between the current row's colour and Navigate mode's cursor, so it
+  reads as neither; in the `terminal` theme, which has no colours to mix, the row is underlined
+  instead.
 - The sidebar's dividing line lights up while the mouse is over it or dragging it.
 - Ctrl+click works as a right-click on the sidebar, the tab bar and pane borders, as it does
   elsewhere on macOS. Terminals pass ctrl+click on to Herdr as a left click with Ctrl held, and

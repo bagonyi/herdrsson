@@ -379,3 +379,71 @@ fn a_hovered_row_does_not_look_like_the_navigate_cursor() {
         .iter()
         .any(|&underlined| underlined));
 }
+
+#[test]
+fn hovering_an_agent_row_highlights_all_its_lines() {
+    let mut projected = snapshot();
+    projected.agents = [("pane_1", true), ("pane_2", false)]
+        .into_iter()
+        .map(|(pane_id, focused)| ClientShellAgent {
+            pane_id: pane_id.into(),
+            workspace_id: "ws_1".into(),
+            tab_id: "tab_1".into(),
+            name: Some(pane_id.into()),
+            display_agent: None,
+            agent: Some("claude".into()),
+            title: None,
+            terminal_title: None,
+            terminal_title_stripped: None,
+            agent_status: AgentStatus::Idle,
+            state_change_seq: 1,
+            state_labels: Vec::new(),
+            tokens: Vec::new(),
+            focused,
+        })
+        .collect();
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+    let plain = state.compose(140, 30).expect("frame");
+    let agent = |state: &ClientShellState, pane_id: &str| {
+        state
+            .hits
+            .agents
+            .iter()
+            .find(|(_, id)| id == pane_id)
+            .map(|(rect, _)| *rect)
+            .expect("visible agent row")
+    };
+    let lines = |rect: Rect| {
+        (rect.y..rect.bottom()).map(move |y| Rect {
+            y,
+            height: 1,
+            ..rect
+        })
+    };
+    let lit = hover_bg(&state);
+    let other = agent(&state, "pane_2");
+    assert!(other.height > 1, "an agent row has two lines by default");
+
+    let outcome = state.handle_raw_events(vec![moved(other.x + 2, other.bottom() - 1)]);
+    assert!(outcome.repaint, "entering an agent row repaints");
+    let frame = state.compose(140, 30).expect("frame");
+    for line in lines(other) {
+        assert!(
+            backgrounds(&frame, line).iter().all(|bg| *bg == lit),
+            "every line of the row is lit"
+        );
+    }
+
+    let focused = agent(&state, "pane_1");
+    state.handle_raw_events(vec![moved(focused.x + 2, focused.y)]);
+    let frame = state.compose(140, 30).expect("frame");
+    for line in lines(focused).chain(lines(other)) {
+        assert_eq!(
+            backgrounds(&frame, line),
+            backgrounds(&plain, line),
+            "the focused agent keeps its background and the other row is unlit"
+        );
+    }
+}
