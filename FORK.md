@@ -101,6 +101,17 @@ space's name. If Herdr ever gets groups of its own, this fork will drop these an
   haven't looked at, and the blocked colour (red) while one there is blocked, until you answer
   it. A tab cut short at the edge counts as hidden. Stock Herdr's arrows only show whether you
   can scroll.
+- An idle agent counts as blocked through a fallback rule only once that reading has held for 5
+  seconds. Herdr reads an agent's state from its screen. Most blocked readings come from rules
+  that recognise a question or permission prompt by its controls; a few fallback rules (one each
+  for Claude, Codex and Kimi) catch prompts those miss, and Claude's and Codex's match words like
+  "would you like to" anywhere on the screen. An idle Claude's screen sometimes read blocked
+  through its fallback rule for up to about 3 seconds, probably while Claude redrew it, and
+  blocked then idle counts as finished: a tab untouched for days got a finished mark and a
+  notification. A working agent's blocked readings still count at once, fallback or not (Claude
+  asking to edit a file is one), as do prompts recognised by their controls. A prompt only a
+  fallback rule catches that appears while the agent is idle shows 5 seconds late. Stock Herdr
+  counts every reading straight away.
 - The agents panel can be hidden, giving the spaces list the whole sidebar.
 - The agents panel's title shows how many agents it lists, `agents · 24`, counting only those a
   plugin's agent view shows.
