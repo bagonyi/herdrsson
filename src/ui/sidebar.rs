@@ -1,3 +1,4 @@
+mod ago;
 mod tokens;
 
 use ratatui::{
@@ -6,6 +7,7 @@ use ratatui::{
     text::Span,
 };
 
+pub(crate) use self::ago::{show_working as sidebar_show_working, sidebar_ago_changed};
 pub(crate) use self::tokens::{
     agent_rows as sidebar_agent_rows, space_rows as sidebar_space_rows, AgentTokenContext,
     ResolvedToken, ResolvedTokenKind, SpaceTokenContext,

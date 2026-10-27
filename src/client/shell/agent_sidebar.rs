@@ -292,7 +292,7 @@ pub(super) fn agent_row(
         .agent
         .as_deref()
         .and_then(crate::detect::parse_agent_label);
-    let rows = crate::ui::sidebar_agent_rows(
+    let mut rows = crate::ui::sidebar_agent_rows(
         &config.agents,
         crate::ui::AgentTokenContext {
             machine,
@@ -310,6 +310,10 @@ pub(super) fn agent_row(
         },
         state_text,
     );
+    // Fork: a working agent shows `working` in place of its `ago` times.
+    if agent.agent_status == crate::api::schema::AgentStatus::Working {
+        crate::ui::sidebar_show_working(&mut rows);
+    }
     Some(AgentRow {
         pane_id: agent.pane_id.clone(),
         status: agent.agent_status,

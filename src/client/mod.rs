@@ -673,6 +673,8 @@ async fn run_client_loop(
 
     // Main event loop.
     let mut client_timer = timer::ClientLoopTimer::new();
+    // Fork: the second the sidebar's `ago` times were last drawn in (`tick_ago`).
+    let mut ago_second = 0;
     #[cfg(windows)]
     let mut stdin_open = true;
     while !should_quit.load(Ordering::Acquire) {
@@ -2334,6 +2336,7 @@ async fn run_client_loop(
                             | shell.tick_workspace_highlight(now)
                             | shell.tick_endpoint_error(now);
                         outcome.repaint |= shell.tick_seen();
+                        outcome.repaint |= shell.tick_ago(&mut ago_second);
                         let frame = outcome
                             .repaint
                             .then(|| shell.compose(state.reported_size.0, state.reported_size.1))

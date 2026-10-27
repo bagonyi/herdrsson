@@ -103,11 +103,9 @@ pub(crate) fn agent_rows(
                         AgentSidebarToken::TerminalTitleStripped => context
                             .terminal_title_stripped
                             .map(|value| ResolvedTokenKind::TerminalTitle(value.to_string())),
-                        AgentSidebarToken::Custom(name) => context
-                            .tokens
-                            .get(name)
-                            .cloned()
-                            .map(ResolvedTokenKind::Custom),
+                        AgentSidebarToken::Custom(name) => context.tokens.get(name).map(|value| {
+                            ResolvedTokenKind::Custom(super::ago::custom_value(value, style.format))
+                        }),
                         AgentSidebarToken::Styled { .. } => None,
                     }?;
                     let style = kind
@@ -159,11 +157,9 @@ pub(crate) fn space_rows(
                             .filter(|(ahead, behind)| *ahead > 0 || *behind > 0)
                             .map(|(ahead, behind)| ResolvedTokenKind::GitStatus { ahead, behind }),
                         SpaceSidebarToken::GitStatus => None,
-                        SpaceSidebarToken::Custom(name) => context
-                            .tokens
-                            .get(name)
-                            .cloned()
-                            .map(ResolvedTokenKind::Custom),
+                        SpaceSidebarToken::Custom(name) => context.tokens.get(name).map(|value| {
+                            ResolvedTokenKind::Custom(super::ago::custom_value(value, style.format))
+                        }),
                         SpaceSidebarToken::Styled { .. } => None,
                     }?;
                     let style = kind
