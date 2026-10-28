@@ -215,12 +215,15 @@ group, by keyboard.
 
 ## plugins
 
-Two plugins that go well with this fork. Both work with stock Herdr too:
+Three plugins that go well with this fork. All three work with stock Herdr too:
 
 - [Tab Status](https://github.com/bagonyi/herdr-tab-status) puts 🟢 done, ⏳ working or 🟠 blocked
   in front of tab names.
 - [Restore Commands](https://github.com/bagonyi/herdr-restore-commands) brings back commands such
   as `gh dash` and `lnav` in their panes when a session restarts.
+- [Agent Recency](https://github.com/bagonyi/herdr-agent-recency) lists the agents panel by each
+  agent's last activity, latest first, and shows when that was. On this fork the time can read
+  `5m ago`.
 
 ## building
 
