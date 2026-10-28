@@ -250,7 +250,7 @@ released, and the Herdr release it's built on.
 
 ```
 $ herdr --version
-herdrsson 2026.10.25 (based on herdr 0.9.5)
+herdrsson 2026.10.28 (based on herdr 0.9.5)
 ```
 
 A second release on the same day ends in `.2`. Moving onto a new Herdr release changes only the
@@ -268,6 +268,11 @@ uses the Herdr number.
   counts as looked at.
 - 2026.10.25 (on Herdr 0.9.5): back on a Herdr release, with the fixes of Herdr 0.9.4 and 0.9.5.
   Nothing new of its own.
+- 2026.10.28 (on Herdr 0.9.5): a tab's right-click menu moves it to another space, and ctrl+click
+  opens the right-click menus. After a restart, agents come back latest conversation first. The
+  agents panel shows how many agents it lists and highlights the row under the mouse, and a
+  custom token can show a time as `5m ago`. An idle agent counts as blocked through a fallback
+  rule only after 5 seconds, so idle Claude tabs no longer get stray finished marks.
 
 ## caveats
 
