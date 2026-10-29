@@ -102,16 +102,21 @@ pub struct SidebarTokenStyle {
     pub fg: Option<SidebarTokenColor>,
     pub bold: Option<bool>,
     pub dim: Option<bool>,
-    /// Fork: how a custom token's value is shown (`format = "ago"`). Rules can't change it.
+    /// Fork: how a custom token's value is shown (`format = "ago"`, `"left"` or `"bar"`). Rules
+    /// can't change it.
     pub format: Option<SidebarTokenFormat>,
 }
 
 /// Fork: `ago` shows a custom token holding a Unix time in seconds as the time since then,
-/// e.g. `5m ago` (see `crate::ui::sidebar::ago`).
+/// e.g. `5m ago`, and `left` as the time until then, e.g. `5m left`; `bar` shows one holding
+/// `FROM/UNTIL` as the share of that time still left, e.g. `▰▰▰▰▱▱` (see
+/// `crate::ui::sidebar::ago`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SidebarTokenFormat {
     Ago,
+    Left,
+    Bar,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
