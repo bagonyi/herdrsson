@@ -1,19 +1,27 @@
 //! Fork: `format = "ago"` on a custom sidebar token shows its value, a Unix time in
 //! seconds, as the time since then: `10s ago` (in steps of 10 seconds), `5m ago`, `3h ago`,
 //! `2d ago`. Rules match that text. A working agent's row shows `working` in its place
-//! (`show_working`). The client repaints each second while a row uses it
-//! (`ClientShellState::tick_ago`).
+//! (`show_working`). `format = "left"` counts down to such a time instead: `5m left`, and
+//! `0s left` in its last 10 seconds and once it has passed. `format = "bar"` shows a value of two such times,
+//! `FROM/UNTIL`, as the share of the time between them still left: `▰▰▰▰▱▱`. The client
+//! repaints each second while a row uses any of them (`ClientShellState::tick_ago`).
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::tokens::{ResolvedToken, ResolvedTokenKind};
 use crate::config::{AgentsSidebarConfig, SidebarTokenFormat, SpacesSidebarConfig};
 
-/// A custom token's value as its row shows it. A value that isn't a Unix time shows as it is.
+/// A custom token's value as its row shows it. A value its format can't read shows as it is.
 pub(super) fn custom_value(value: &str, format: Option<SidebarTokenFormat>) -> String {
     match format {
         Some(SidebarTokenFormat::Ago) => {
             ago(value, unix_now()).unwrap_or_else(|| value.to_string())
+        }
+        Some(SidebarTokenFormat::Left) => {
+            left(value, unix_now()).unwrap_or_else(|| value.to_string())
+        }
+        Some(SidebarTokenFormat::Bar) => {
+            bar(value, unix_now()).unwrap_or_else(|| value.to_string())
         }
         None => value.to_string(),
     }
@@ -29,12 +37,40 @@ fn unix_now() -> u64 {
 /// minute it steps by 10 seconds, so it doesn't count every second.
 fn ago(value: &str, now: u64) -> Option<String> {
     let seconds = now.saturating_sub(value.parse().ok()?);
-    Some(match seconds {
-        0..=59 => format!("{}s ago", seconds / 10 * 10),
-        60..=3_599 => format!("{}m ago", seconds / 60),
-        3_600..=86_399 => format!("{}h ago", seconds / 3_600),
-        _ => format!("{}d ago", seconds / 86_400),
-    })
+    Some(format!("{} ago", duration(seconds)))
+}
+
+/// The time until `value`, in the steps `ago` uses; a time that has passed counts as `0s left`.
+fn left(value: &str, now: u64) -> Option<String> {
+    let seconds = value.parse::<u64>().ok()?.saturating_sub(now);
+    Some(format!("{} left", duration(seconds)))
+}
+
+/// A `bar`'s segments.
+const BAR_SEGMENTS: u64 = 6;
+
+/// The time left of `FROM/UNTIL` as `BAR_SEGMENTS` segments, `▰` for each one not yet over, so
+/// any time left shows at least one: full until `FROM`, empty from `UNTIL` on.
+fn bar(value: &str, now: u64) -> Option<String> {
+    let (from, until) = value.split_once('/')?;
+    let (from, until) = (from.parse::<u64>().ok()?, until.parse::<u64>().ok()?);
+    let span = until.checked_sub(from).filter(|span| *span > 0)?;
+    let left = until.saturating_sub(now).min(span);
+    // In u128, as `left * BAR_SEGMENTS` overflows u64 for a span over a sixth of its range.
+    let full = (u128::from(left) * u128::from(BAR_SEGMENTS)).div_ceil(u128::from(span));
+    let full = usize::try_from(full)
+        .unwrap_or(0)
+        .min(BAR_SEGMENTS as usize);
+    Some("▰".repeat(full) + &"▱".repeat(BAR_SEGMENTS as usize - full))
+}
+
+fn duration(seconds: u64) -> String {
+    match seconds {
+        0..=59 => format!("{}s", seconds / 10 * 10),
+        60..=3_599 => format!("{}m", seconds / 60),
+        3_600..=86_399 => format!("{}h", seconds / 3_600),
+        _ => format!("{}d", seconds / 86_400),
+    }
 }
 
 /// A working agent's row shows `working` in place of its `ago` times: how long ago it started
@@ -48,7 +84,7 @@ pub(crate) fn show_working(rows: &mut [Vec<ResolvedToken>]) {
 }
 
 /// Whether a new second has begun since `last_second` while a row shows a token as `ago`,
-/// so the sidebar needs a repaint. Updates `last_second`.
+/// `left` or `bar`, so the sidebar needs a repaint. Updates `last_second`.
 pub(crate) fn sidebar_ago_changed(
     agents: &AgentsSidebarConfig,
     spaces: &SpacesSidebarConfig,
@@ -61,7 +97,8 @@ fn new_second(last_second: &mut u64, now: u64) -> bool {
     std::mem::replace(last_second, now) != now
 }
 
-/// Whether an agent or space row shows a token as `ago`, so the sidebar changes as time passes.
+/// Whether an agent or space row shows a token as `ago`, `left` or `bar`, so the sidebar
+/// changes as time passes.
 fn sidebar_uses_ago(agents: &AgentsSidebarConfig, spaces: &SpacesSidebarConfig) -> bool {
     let agent_rows = agents
         .rows
@@ -127,9 +164,72 @@ mod tests {
     }
 
     #[test]
+    fn left_counts_down_in_the_same_steps_and_stops_at_zero() {
+        let now = 10_000_000;
+        for (until, text) in [
+            (0, "0s left"),
+            (9, "0s left"),
+            (10, "10s left"),
+            (59, "50s left"),
+            (60, "1m left"),
+            (3_599, "59m left"),
+            (3_600, "1h left"),
+            (86_400, "1d left"),
+        ] {
+            assert_eq!(left(&(now + until).to_string(), now).as_deref(), Some(text));
+        }
+        assert_eq!(
+            left(&(now - 30).to_string(), now).as_deref(),
+            Some("0s left")
+        );
+    }
+
+    #[test]
+    fn bar_shows_a_segment_for_each_sixth_of_the_time_not_yet_over() {
+        let (from, until) = (10_000_000, 10_003_600);
+        let value = format!("{from}/{until}");
+        for (now, text) in [
+            (from - 100, "▰▰▰▰▰▰"),
+            (from, "▰▰▰▰▰▰"),
+            (from + 599, "▰▰▰▰▰▰"),
+            (from + 600, "▰▰▰▰▰▱"),
+            (from + 1_800, "▰▰▰▱▱▱"),
+            (until - 1, "▰▱▱▱▱▱"),
+            (until, "▱▱▱▱▱▱"),
+            (until + 100, "▱▱▱▱▱▱"),
+        ] {
+            assert_eq!(bar(&value, now).as_deref(), Some(text), "at {now}");
+        }
+    }
+
+    #[test]
+    fn a_bar_over_a_huge_span_does_not_overflow() {
+        let now = 1_793_000_000;
+        assert_eq!(
+            bar(&format!("0/{}", u64::MAX), now).as_deref(),
+            Some("▰▰▰▰▰▰")
+        );
+        assert_eq!(
+            bar(&format!("{}/{}", u64::MAX - 600, u64::MAX), u64::MAX - 1).as_deref(),
+            Some("▰▱▱▱▱▱")
+        );
+    }
+
+    #[test]
+    fn a_bar_needs_two_unix_times_the_second_one_later() {
+        for value in [
+            "10/10", "20/10", "10", "10/", "/10", "a/b", "10-20", "10/20/30",
+        ] {
+            assert_eq!(bar(value, 15), None, "{value}");
+        }
+    }
+
+    #[test]
     fn a_value_that_is_not_a_unix_time_shows_as_it_is() {
         for value in ["soon", "", "-5", "12.5", " 12"] {
             assert_eq!(custom_value(value, Some(SidebarTokenFormat::Ago)), value);
+            assert_eq!(custom_value(value, Some(SidebarTokenFormat::Left)), value);
+            assert_eq!(custom_value(value, Some(SidebarTokenFormat::Bar)), value);
         }
         assert_eq!(custom_value("1700000000", None), "1700000000");
     }
@@ -169,14 +269,71 @@ rows = [[{ token = "$last_at", format = "ago" }]]
     }
 
     #[test]
+    fn agent_rows_show_the_time_left_and_rules_match_that_text() {
+        let config = sidebar(
+            r##"
+[agents]
+rows = [[{ token = "$cache_until", format = "left", rules = [{ contains = "s left", fg = "#ff0000" }] }]]
+"##,
+        )
+        .unwrap();
+        let tokens = HashMap::from([(
+            "cache_until".to_string(),
+            (unix_now() + 42 * 60 + 30).to_string(),
+        )]);
+        let rows = agent_rows(&config.agents, agent_context(&tokens), "idle");
+        assert_eq!(
+            rows[0][0].kind,
+            ResolvedTokenKind::Custom("42m left".into())
+        );
+        assert_eq!(rows[0][0].style.fg, None);
+
+        let tokens = HashMap::from([("cache_until".to_string(), (unix_now() + 25).to_string())]);
+        let rows = agent_rows(&config.agents, agent_context(&tokens), "idle");
+        assert!(
+            matches!(&rows[0][0].kind, ResolvedTokenKind::Custom(text) if text.ends_with("s left"))
+        );
+        assert!(rows[0][0].style.fg.is_some());
+    }
+
+    #[test]
+    fn agent_rows_show_a_bar_and_rules_match_its_segments() {
+        let config = sidebar(
+            r##"
+[agents]
+rows = [[{ token = "$cache_span", format = "bar", rules = [{ equals = "▰▱▱▱▱▱", fg = "#ff9e64" }] }]]
+"##,
+        )
+        .unwrap();
+        let now = unix_now();
+        let span = |from: u64, until: u64| {
+            HashMap::from([("cache_span".to_string(), format!("{from}/{until}"))])
+        };
+
+        let tokens = span(now - 60, now + 3_540);
+        let rows = agent_rows(&config.agents, agent_context(&tokens), "idle");
+        assert_eq!(rows[0][0].kind, ResolvedTokenKind::Custom("▰▰▰▰▰▰".into()));
+        assert_eq!(rows[0][0].style.fg, None);
+
+        let tokens = span(now - 3_300, now + 300);
+        let rows = agent_rows(&config.agents, agent_context(&tokens), "idle");
+        assert_eq!(rows[0][0].kind, ResolvedTokenKind::Custom("▰▱▱▱▱▱".into()));
+        assert!(rows[0][0].style.fg.is_some());
+    }
+
+    #[test]
     fn a_working_agent_shows_working_in_place_of_its_ago_times_only() {
         let config = sidebar(
-            "[agents]\nrows = [[\"workspace\", \"$note\", { token = \"$last_at\", format = \"ago\" }]]\n",
+            "[agents]\nrows = [[\"workspace\", \"$note\", { token = \"$last_at\", format = \"ago\" }, { token = \"$until\", format = \"left\" }]]\n",
         )
         .unwrap();
         let tokens = HashMap::from([
             ("note".to_string(), "1700000000".to_string()),
             ("last_at".to_string(), (unix_now() - 120).to_string()),
+            (
+                "until".to_string(),
+                (unix_now() + 3 * 3_600 + 5).to_string(),
+            ),
         ]);
         let mut rows = agent_rows(&config.agents, agent_context(&tokens), "working");
         assert_eq!(rows[0][2].kind, ResolvedTokenKind::Custom("2m ago".into()));
@@ -188,21 +345,31 @@ rows = [[{ token = "$last_at", format = "ago" }]]
             ResolvedTokenKind::Custom("1700000000".into())
         );
         assert_eq!(rows[0][2].kind, ResolvedTokenKind::Custom("working".into()));
+        assert_eq!(rows[0][3].kind, ResolvedTokenKind::Custom("3h left".into()));
     }
 
     #[test]
-    fn format_applies_only_to_custom_tokens_and_takes_only_ago() {
-        assert!(sidebar("[agents]\nrows = [[{ token = \"tab\", format = \"ago\" }]]\n").is_err());
+    fn format_applies_only_to_custom_tokens_and_takes_only_ago_left_or_bar() {
+        for format in ["ago", "left", "bar"] {
+            assert!(sidebar(&format!(
+                "[agents]\nrows = [[{{ token = \"tab\", format = \"{format}\" }}]]\n"
+            ))
+            .is_err());
+        }
         assert!(sidebar("[agents]\nrows = [[{ token = \"$t\", format = \"since\" }]]\n").is_err());
     }
 
     #[test]
     fn format_round_trips_through_serialization() {
-        let config =
-            sidebar("[agents]\nrows = [[{ token = \"$t\", format = \"ago\" }]]\n").unwrap();
-        let text = toml::to_string(&config).unwrap();
-        assert!(text.contains("format = \"ago\""), "{text}");
-        assert_eq!(sidebar(&text).unwrap(), config);
+        for format in ["ago", "left", "bar"] {
+            let config = sidebar(&format!(
+                "[agents]\nrows = [[{{ token = \"$t\", format = \"{format}\" }}]]\n"
+            ))
+            .unwrap();
+            let text = toml::to_string(&config).unwrap();
+            assert!(text.contains(&format!("format = \"{format}\"")), "{text}");
+            assert_eq!(sidebar(&text).unwrap(), config);
+        }
     }
 
     #[test]
@@ -246,6 +413,12 @@ rows = [[{ token = "$last_at", format = "ago" }]]
         ));
         assert!(uses(
             "[spaces]\nrows = [[{ token = \"$t\", format = \"ago\" }]]\n"
+        ));
+        assert!(uses(
+            "[agents]\nrows = [[{ token = \"$t\", format = \"left\" }]]\n"
+        ));
+        assert!(uses(
+            "[agents]\nrows = [[{ token = \"$t\", format = \"bar\" }]]\n"
         ));
     }
 }

@@ -126,6 +126,13 @@ panel by each agent's last activity, which this fork shows as `3m ago`.
   `2d ago`. While an agent works, its row says `working` instead. Write it as
   `{ token = "$last_at", format = "ago" }`; its rules match that text. Stock Herdr shows the
   number.
+- `format = "left"` counts down to such a time instead, in the same steps: `42m left`, down to
+  `0s left` in its last 10 seconds and once it has passed, e.g. for the Claude Cache Timer
+  plugin's `$cache_until`, when the agent's prompt cache expires.
+- `format = "bar"` shows a token holding two such times, `FROM/UNTIL`, as six segments, one
+  going each time a sixth of the time between them is over: `▰▰▰▰▱▱`. Rules match that text,
+  e.g. `{ equals = "▰▱▱▱▱▱", fg = "#ff9e64" }` for the last segment. Claude Cache Timer's
+  `$cache_span` runs from the agent's last request to when its cache expires.
 - Notifications leave out the 🟢 ⏳ 🟠 marker that [Tab Status](https://github.com/bagonyi/herdr-tab-status)
   puts in front of a tab's name. The plugin changes it only after the notification is made, so a
   "finished" notification would still show ⏳.
