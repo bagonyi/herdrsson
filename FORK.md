@@ -266,7 +266,7 @@ released, and the Herdr release it's built on.
 
 ```
 $ herdr --version
-herdrsson 2026.10.28 (based on herdr 0.9.5)
+herdrsson 2026.10.29 (based on herdr 0.9.5)
 ```
 
 A second release on the same day ends in `.2`. Moving onto a new Herdr release changes only the
@@ -289,6 +289,9 @@ uses the Herdr number.
   agents panel shows how many agents it lists and highlights the row under the mouse, and a
   custom token can show a time as `5m ago`. An idle agent counts as blocked through a fallback
   rule only after 5 seconds, so idle Claude tabs no longer get stray finished marks.
+- 2026.10.29 (on Herdr 0.9.5): a custom token can count down to a time, `42m left`, or show the
+  time left between two times as six segments, `▰▰▰▰▱▱`, as the Claude Cache Timer plugin's
+  prompt cache times do.
 
 ## caveats
 
