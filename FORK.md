@@ -135,7 +135,11 @@ idle Claude agent's prompt cache, which empties as its hour runs out, the last s
 - `format = "bar"` shows a token holding two such times, `FROM/UNTIL`, as six segments, one
   going each time a sixth of the time between them is over: `▰▰▰▰▱▱`. Rules match that text,
   e.g. `{ equals = "▰▱▱▱▱▱", fg = "#ff9e64" }` for the last segment. Claude Cache Timer's
-  `$cache_span` runs from the agent's last request to when its cache expires.
+  `$cache_span` runs from the agent's last request to when its cache expires, and stays after
+  that, when the bar is empty, `▱▱▱▱▱▱`.
+- A sidebar token, or a rule, can draw a line through the token, `strikethrough = true`, beside
+  `fg`, `bold` and `dim`: `{ equals = "▱▱▱▱▱▱", dim = true, strikethrough = true }` crosses out
+  an expired cache's bar.
 - Notifications leave out the 🟢 ⏳ 🟠 marker that [Tab Status](https://github.com/bagonyi/herdr-tab-status)
   puts in front of a tab's name. The plugin changes it only after the notification is made, so a
   "finished" notification would still show ⏳.
