@@ -1,3 +1,5 @@
+![Herdrsson with its spaces in the groups Acme, Blog and a folded Oss, red counts of waiting agents, and the agents panel listed by last activity, each agent on three lines with the time since then and a bar of its prompt cache's time left](assets/fork-screenshot.png)
+
 > [!NOTE]
 > **Herdrsson is a personal, unofficial fork of [herdrdev/herdr](https://github.com/herdrdev/herdr).**
 > The `herdrsson` branch is Herdr's code plus space groups in the sidebar (a space named
