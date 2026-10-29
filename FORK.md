@@ -127,8 +127,9 @@ panel by each agent's last activity, which this fork shows as `3m ago`.
   `{ token = "$last_at", format = "ago" }`; its rules match that text. Stock Herdr shows the
   number.
 - `format = "left"` counts down to such a time instead, in the same steps: `42m left`, down to
-  `0s left` in its last 10 seconds and once it has passed, e.g. for the Claude Cache Timer
-  plugin's `$cache_until`, when the agent's prompt cache expires.
+  `0s left` in its last 10 seconds and once it has passed, e.g. for the
+  [Claude Cache Timer](https://github.com/bagonyi/herdr-claude-cache-timer) plugin's
+  `$cache_until`, when the agent's prompt cache expires.
 - `format = "bar"` shows a token holding two such times, `FROM/UNTIL`, as six segments, one
   going each time a sixth of the time between them is over: `▰▰▰▰▱▱`. Rules match that text,
   e.g. `{ equals = "▰▱▱▱▱▱", fg = "#ff9e64" }` for the last segment. Claude Cache Timer's
@@ -228,7 +229,7 @@ group, by keyboard.
 
 ## plugins
 
-Three plugins that go well with this fork. All three work with stock Herdr too:
+Four plugins that go well with this fork. All four work with stock Herdr too:
 
 - [Tab Status](https://github.com/bagonyi/herdr-tab-status) puts 🟢 done, ⏳ working or 🟠 blocked
   in front of tab names.
@@ -237,6 +238,9 @@ Three plugins that go well with this fork. All three work with stock Herdr too:
 - [Agent Recency](https://github.com/bagonyi/herdr-agent-recency) lists the agents panel by each
   agent's last activity, latest first, and shows when that was. On this fork the time can read
   `5m ago`.
+- [Claude Cache Timer](https://github.com/bagonyi/herdr-claude-cache-timer) shows in the agents
+  panel when each Claude agent's prompt cache expires. On this fork it can be a bar, `▰▰▰▰▱▱`,
+  that empties as the time passes.
 
 ## building
 
