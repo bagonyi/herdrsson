@@ -102,8 +102,6 @@ pub struct SidebarTokenStyle {
     pub fg: Option<SidebarTokenColor>,
     pub bold: Option<bool>,
     pub dim: Option<bool>,
-    /// Fork: a line through the token (`strikethrough = true`), as for a time that has passed.
-    pub strikethrough: Option<bool>,
     /// Fork: how a custom token's value is shown (`format = "ago"`, `"left"`, `"bar"` or
     /// `"bar_left"`). Rules can't change it.
     pub format: Option<SidebarTokenFormat>,
@@ -216,8 +214,6 @@ struct RawStyledSidebarToken {
     #[serde(default)]
     dim: Option<bool>,
     #[serde(default)]
-    strikethrough: Option<bool>,
-    #[serde(default)]
     rules: Vec<SidebarTokenRule>,
     #[serde(default)]
     format: Option<SidebarTokenFormat>,
@@ -252,7 +248,6 @@ impl RawSidebarToken {
                         fg: token.fg,
                         bold: token.bold,
                         dim: token.dim,
-                        strikethrough: token.strikethrough,
                         format: token.format,
                     }),
                     token.rules,
@@ -305,9 +300,6 @@ where
     }
     if let Some(dim) = style.dim {
         map.serialize_entry("dim", &dim)?;
-    }
-    if let Some(strikethrough) = style.strikethrough {
-        map.serialize_entry("strikethrough", &strikethrough)?;
     }
     if !rules.is_empty() {
         map.serialize_entry("rules", rules)?;

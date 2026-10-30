@@ -294,12 +294,5 @@ fn apply_token_style(mut style: Style, patch: crate::config::SidebarTokenStyle) 
             style.remove_modifier(Modifier::DIM)
         };
     }
-    if let Some(strikethrough) = patch.strikethrough {
-        style = if strikethrough {
-            style.add_modifier(Modifier::CROSSED_OUT)
-        } else {
-            style.remove_modifier(Modifier::CROSSED_OUT)
-        };
-    }
     style
 }

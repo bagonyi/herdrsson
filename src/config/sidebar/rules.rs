@@ -47,8 +47,6 @@ struct RawRule {
     #[serde(skip_serializing_if = "Option::is_none")]
     dim: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    strikethrough: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     hide: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<String>,
@@ -106,7 +104,6 @@ impl TryFrom<RawRule> for SidebarTokenRule {
                 fg: raw.fg,
                 bold: raw.bold,
                 dim: raw.dim,
-                strikethrough: raw.strikethrough,
                 format: None,
             },
         })
@@ -120,7 +117,6 @@ impl From<SidebarTokenRule> for RawRule {
             fg: rule.style.fg,
             bold: rule.style.bold,
             dim: rule.style.dim,
-            strikethrough: rule.style.strikethrough,
             hide: rule.hide,
             text: rule.text,
             ..Self::default()
@@ -198,7 +194,6 @@ pub(super) fn matching_style(
                 fg: rule.style.fg.or(base.fg),
                 bold: rule.style.bold.or(base.bold),
                 dim: rule.style.dim.or(base.dim),
-                strikethrough: rule.style.strikethrough.or(base.strikethrough),
                 format: base.format,
             });
         }

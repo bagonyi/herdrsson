@@ -146,9 +146,6 @@ Claude agent's prompt cache, which empties as its hour runs out, the last segmen
 - A rule can show other text in its token's place, `text = "..."`:
   `{ equals = "▱▱▱▱▱▱", text = "▱▱▱▱▱▱ expired" }` says the cache has expired next to its empty
   bar.
-- A sidebar token, or a rule, can draw a line through the token, `strikethrough = true`, beside
-  `fg`, `bold` and `dim`: `{ equals = "▱▱▱▱▱▱", dim = true, strikethrough = true }` crosses out
-  an expired cache's bar.
 - Notifications leave out the 🟢 ⏳ 🟠 marker that [Tab Status](https://github.com/bagonyi/herdr-tab-status)
   puts in front of a tab's name. The plugin changes it only after the notification is made, so a
   "finished" notification would still show ⏳.
