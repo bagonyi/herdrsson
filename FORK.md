@@ -282,7 +282,7 @@ released, and the Herdr release it's built on.
 
 ```
 $ herdr --version
-herdrsson 2026.10.29.2 (based on herdr 0.9.5)
+herdrsson 2026.10.30 (based on herdr 0.9.5)
 ```
 
 A second release on the same day ends in `.2`. Moving onto a new Herdr release changes only the
@@ -310,6 +310,10 @@ uses the Herdr number.
   prompt cache times do.
 - 2026.10.29.2 (on Herdr 0.9.5): sidebar tokens and their rules can be struck through, as an
   expired prompt cache's empty bar is.
+- 2026.10.30 (on Herdr 0.9.5): the agents panel's title counts its agents by status. The bar can
+  show the time left after it, `▰▰▰▱▱▱ 28m`, and a sidebar rule can show other text in its
+  token's place, such as `▱▱▱▱▱▱ expired` for an expired prompt cache. The struck-through style
+  of 2026.10.29.2 is gone again: a config that still sets `strikethrough` is rejected.
 
 ## caveats
 
