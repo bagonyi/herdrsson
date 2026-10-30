@@ -39,6 +39,22 @@ impl ResolvedTokenKind {
             Self::StateIcon | Self::GitStatus { .. } => None,
         }
     }
+
+    /// Fork: shows `text` in place of the value, for a rule's `text`.
+    fn set_text(&mut self, text: &str) {
+        match self {
+            Self::StateText(value)
+            | Self::Machine(value)
+            | Self::Workspace(value)
+            | Self::Tab(value)
+            | Self::Pane(value)
+            | Self::Agent(value)
+            | Self::TerminalTitle(value)
+            | Self::Branch(value)
+            | Self::Custom(value) => *value = text.to_string(),
+            Self::StateIcon | Self::GitStatus { .. } => {}
+        }
+    }
 }
 
 impl ResolvedToken {
@@ -77,7 +93,7 @@ pub(crate) fn agent_rows(
                 .iter()
                 .filter_map(|configured| {
                     let (token, style) = configured.parts();
-                    let kind = match token {
+                    let mut kind = match token {
                         AgentSidebarToken::StateIcon => Some(ResolvedTokenKind::StateIcon),
                         AgentSidebarToken::StateText => {
                             Some(ResolvedTokenKind::StateText(state_text.to_string()))
@@ -111,6 +127,12 @@ pub(crate) fn agent_rows(
                     let style = kind
                         .text_value()
                         .map_or(Some(style), |value| configured.style_for_value(value))?;
+                    if let Some(text) = kind
+                        .text_value()
+                        .and_then(|value| configured.text_for_value(value))
+                    {
+                        kind.set_text(text);
+                    }
                     Some(ResolvedToken::new(kind, style))
                 })
                 .collect::<Vec<_>>();
@@ -140,7 +162,7 @@ pub(crate) fn space_rows(
                 .iter()
                 .filter_map(|configured| {
                     let (token, style) = configured.parts();
-                    let kind = match token {
+                    let mut kind = match token {
                         SpaceSidebarToken::StateIcon => Some(ResolvedTokenKind::StateIcon),
                         SpaceSidebarToken::StateText => {
                             Some(ResolvedTokenKind::StateText(context.state_text.to_string()))
@@ -165,6 +187,12 @@ pub(crate) fn space_rows(
                     let style = kind
                         .text_value()
                         .map_or(Some(style), |value| configured.style_for_value(value))?;
+                    if let Some(text) = kind
+                        .text_value()
+                        .and_then(|value| configured.text_for_value(value))
+                    {
+                        kind.set_text(text);
+                    }
                     Some(ResolvedToken::new(kind, style))
                 })
                 .collect::<Vec<_>>();

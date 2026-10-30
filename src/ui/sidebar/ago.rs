@@ -3,8 +3,9 @@
 //! `2d ago`. Rules match that text. A working agent's row shows `working` in its place
 //! (`show_working`). `format = "left"` counts down to such a time instead: `5m left`, and
 //! `0s left` in its last 10 seconds and once it has passed. `format = "bar"` shows a value of two such times,
-//! `FROM/UNTIL`, as the share of the time between them still left: `▰▰▰▰▱▱`. The client
-//! repaints each second while a row uses any of them (`ClientShellState::tick_ago`).
+//! `FROM/UNTIL`, as the share of the time between them still left: `▰▰▰▰▱▱`, and `format =
+//! "bar_left"` that bar with the time left after it: `▰▰▰▰▱▱ 38m`. The client repaints each
+//! second while a row uses any of them (`ClientShellState::tick_ago`).
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -22,6 +23,9 @@ pub(super) fn custom_value(value: &str, format: Option<SidebarTokenFormat>) -> S
         }
         Some(SidebarTokenFormat::Bar) => {
             bar(value, unix_now()).unwrap_or_else(|| value.to_string())
+        }
+        Some(SidebarTokenFormat::BarLeft) => {
+            bar_left(value, unix_now()).unwrap_or_else(|| value.to_string())
         }
         None => value.to_string(),
     }
@@ -52,6 +56,22 @@ const BAR_SEGMENTS: u64 = 6;
 /// The time left of `FROM/UNTIL` as `BAR_SEGMENTS` segments, `▰` for each one not yet over, so
 /// any time left shows at least one: full until `FROM`, empty from `UNTIL` on.
 fn bar(value: &str, now: u64) -> Option<String> {
+    bar_and_left(value, now).map(|(bar, _)| bar)
+}
+
+/// The `bar` of `FROM/UNTIL` with the time left after it, in the steps `left` uses:
+/// `▰▰▰▱▱▱ 28m`. Once `UNTIL` has passed only the empty bar shows, for rules to match.
+fn bar_left(value: &str, now: u64) -> Option<String> {
+    let (bar, left) = bar_and_left(value, now)?;
+    Some(if left == 0 {
+        bar
+    } else {
+        format!("{bar} {}", duration(left))
+    })
+}
+
+/// A `bar` and the seconds it shows as left, never more than the span.
+fn bar_and_left(value: &str, now: u64) -> Option<(String, u64)> {
     let (from, until) = value.split_once('/')?;
     let (from, until) = (from.parse::<u64>().ok()?, until.parse::<u64>().ok()?);
     let span = until.checked_sub(from).filter(|span| *span > 0)?;
@@ -61,7 +81,10 @@ fn bar(value: &str, now: u64) -> Option<String> {
     let full = usize::try_from(full)
         .unwrap_or(0)
         .min(BAR_SEGMENTS as usize);
-    Some("▰".repeat(full) + &"▱".repeat(BAR_SEGMENTS as usize - full))
+    Some((
+        "▰".repeat(full) + &"▱".repeat(BAR_SEGMENTS as usize - full),
+        left,
+    ))
 }
 
 fn duration(seconds: u64) -> String {
@@ -84,7 +107,7 @@ pub(crate) fn show_working(rows: &mut [Vec<ResolvedToken>]) {
 }
 
 /// Whether a new second has begun since `last_second` while a row shows a token as `ago`,
-/// `left` or `bar`, so the sidebar needs a repaint. Updates `last_second`.
+/// `left`, `bar` or `bar_left`, so the sidebar needs a repaint. Updates `last_second`.
 pub(crate) fn sidebar_ago_changed(
     agents: &AgentsSidebarConfig,
     spaces: &SpacesSidebarConfig,
@@ -97,8 +120,8 @@ fn new_second(last_second: &mut u64, now: u64) -> bool {
     std::mem::replace(last_second, now) != now
 }
 
-/// Whether an agent or space row shows a token as `ago`, `left` or `bar`, so the sidebar
-/// changes as time passes.
+/// Whether an agent or space row shows a token as `ago`, `left`, `bar` or `bar_left`, so the
+/// sidebar changes as time passes.
 fn sidebar_uses_ago(agents: &AgentsSidebarConfig, spaces: &SpacesSidebarConfig) -> bool {
     let agent_rows = agents
         .rows
@@ -203,6 +226,25 @@ mod tests {
     }
 
     #[test]
+    fn bar_left_puts_the_time_left_after_the_bar_and_only_the_empty_bar_once_over() {
+        let (from, until) = (10_000_000, 10_003_600);
+        let value = format!("{from}/{until}");
+        for (now, text) in [
+            (from - 100, "▰▰▰▰▰▰ 1h"),
+            (from + 1, "▰▰▰▰▰▰ 59m"),
+            (from + 1_800, "▰▰▰▱▱▱ 30m"),
+            (until - 241, "▰▱▱▱▱▱ 4m"),
+            (until - 45, "▰▱▱▱▱▱ 40s"),
+            (until - 1, "▰▱▱▱▱▱ 0s"),
+            (until, "▱▱▱▱▱▱"),
+            (until + 100, "▱▱▱▱▱▱"),
+        ] {
+            assert_eq!(bar_left(&value, now).as_deref(), Some(text), "at {now}");
+        }
+        assert_eq!(bar_left("20/10", 15), None);
+    }
+
+    #[test]
     fn a_bar_over_a_huge_span_does_not_overflow() {
         let now = 1_793_000_000;
         assert_eq!(
@@ -230,6 +272,10 @@ mod tests {
             assert_eq!(custom_value(value, Some(SidebarTokenFormat::Ago)), value);
             assert_eq!(custom_value(value, Some(SidebarTokenFormat::Left)), value);
             assert_eq!(custom_value(value, Some(SidebarTokenFormat::Bar)), value);
+            assert_eq!(
+                custom_value(value, Some(SidebarTokenFormat::BarLeft)),
+                value
+            );
         }
         assert_eq!(custom_value("1700000000", None), "1700000000");
     }
@@ -362,6 +408,68 @@ rows = [[{ token = "$cache_span", format = "bar", rules = [{ equals = "▱▱▱
     }
 
     #[test]
+    fn a_rule_can_show_other_text_in_place_of_the_value() {
+        let config = sidebar(
+            r##"
+[agents]
+rows = [[{ token = "$cache_span", format = "bar_left", rules = [
+  { starts_with = "▰▱▱▱▱▱", fg = "#ff9e64" },
+  { equals = "▱▱▱▱▱▱", text = "Cache: expired", dim = true },
+] }]]
+[spaces]
+rows = [[{ token = "$cache_span", format = "bar_left", rules = [{ equals = "▱▱▱▱▱▱", text = "cold" }] }]]
+"##,
+        )
+        .unwrap();
+        let now = unix_now();
+        let span = |from: u64, until: u64| {
+            HashMap::from([("cache_span".to_string(), format!("{from}/{until}"))])
+        };
+
+        let tokens = span(now - 3_300, now + 299);
+        let rows = agent_rows(&config.agents, agent_context(&tokens), "idle");
+        assert_eq!(
+            rows[0][0].kind,
+            ResolvedTokenKind::Custom("▰▱▱▱▱▱ 4m".into())
+        );
+        assert!(rows[0][0].style.fg.is_some());
+        assert_eq!(rows[0][0].style.dim, None);
+
+        let tokens = span(now - 7_200, now - 3_600);
+        let rows = agent_rows(&config.agents, agent_context(&tokens), "idle");
+        assert_eq!(
+            rows[0][0].kind,
+            ResolvedTokenKind::Custom("Cache: expired".into())
+        );
+        assert_eq!(rows[0][0].style.dim, Some(true));
+        assert_eq!(rows[0][0].style.fg, None);
+
+        let rows = space_rows(
+            &config.spaces,
+            SpaceTokenContext {
+                workspace: "repo",
+                branch: None,
+                state_text: "idle",
+                ahead_behind: None,
+                tokens: &tokens,
+                suppress_git_details: false,
+            },
+        );
+        assert_eq!(rows[0][0].kind, ResolvedTokenKind::Custom("cold".into()));
+    }
+
+    #[test]
+    fn rule_text_round_trips() {
+        let config = sidebar(
+            "[agents]\nrows = [[{ token = \"$t\", rules = [{ equals = \"x\", text = \"y\" }] }]]\n",
+        )
+        .unwrap();
+        let text = toml::to_string(&config).unwrap();
+        assert!(text.contains("text = \"y\""), "{text}");
+        assert_eq!(sidebar(&text).unwrap(), config);
+    }
+
+    #[test]
     fn strikethrough_round_trips_on_tokens_and_rules() {
         let config = sidebar(
             "[agents]\nrows = [[{ token = \"$t\", strikethrough = true, rules = [{ equals = \"x\", strikethrough = false }] }]]\n",
@@ -402,7 +510,7 @@ rows = [[{ token = "$cache_span", format = "bar", rules = [{ equals = "▱▱▱
 
     #[test]
     fn format_applies_only_to_custom_tokens_and_takes_only_ago_left_or_bar() {
-        for format in ["ago", "left", "bar"] {
+        for format in ["ago", "left", "bar", "bar_left"] {
             assert!(sidebar(&format!(
                 "[agents]\nrows = [[{{ token = \"tab\", format = \"{format}\" }}]]\n"
             ))
@@ -413,7 +521,7 @@ rows = [[{ token = "$cache_span", format = "bar", rules = [{ equals = "▱▱▱
 
     #[test]
     fn format_round_trips_through_serialization() {
-        for format in ["ago", "left", "bar"] {
+        for format in ["ago", "left", "bar", "bar_left"] {
             let config = sidebar(&format!(
                 "[agents]\nrows = [[{{ token = \"$t\", format = \"{format}\" }}]]\n"
             ))
@@ -471,6 +579,9 @@ rows = [[{ token = "$cache_span", format = "bar", rules = [{ equals = "▱▱▱
         ));
         assert!(uses(
             "[agents]\nrows = [[{ token = \"$t\", format = \"bar\" }]]\n"
+        ));
+        assert!(uses(
+            "[agents]\nrows = [[{ token = \"$t\", format = \"bar_left\" }]]\n"
         ));
     }
 }

@@ -139,6 +139,13 @@ Claude agent's prompt cache, which empties as its hour runs out, the last segmen
   e.g. `{ equals = "▰▱▱▱▱▱", fg = "#ff9e64" }` for the last segment. Claude Cache Timer's
   `$cache_span` runs from the agent's last request to when its cache expires, and stays after
   that, when the bar is empty, `▱▱▱▱▱▱`.
+- `format = "bar_left"` puts the time left after that bar, in the steps of `left`:
+  `▰▰▰▱▱▱ 28m`, and `▰▱▱▱▱▱ 4m` where the bar alone only says "under 10 minutes". Once the time
+  is over it shows just the empty bar, so a rule can match it: `{ starts_with = "▰▱▱▱▱▱", ... }`
+  for the last segment, `{ equals = "▱▱▱▱▱▱", ... }` once expired.
+- A rule can show other text in its token's place, `text = "..."`:
+  `{ equals = "▱▱▱▱▱▱", text = "▱▱▱▱▱▱ expired" }` says the cache has expired next to its empty
+  bar.
 - A sidebar token, or a rule, can draw a line through the token, `strikethrough = true`, beside
   `fg`, `bold` and `dim`: `{ equals = "▱▱▱▱▱▱", dim = true, strikethrough = true }` crosses out
   an expired cache's bar.
