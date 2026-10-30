@@ -62,7 +62,7 @@ pub(super) fn render_agent_panel(
         buffer,
         area,
         snapshot.agent_view_label.as_deref(),
-        rows.len(),
+        &rows.iter().map(|row| row.status).collect::<Vec<_>>(),
         config,
         hits,
     ) {
@@ -92,7 +92,7 @@ pub(super) fn render_agent_panel_header(
     buffer: &mut Buffer,
     area: Rect,
     agent_view_label: Option<&str>,
-    agent_count: usize,
+    agent_statuses: &[crate::api::schema::AgentStatus],
     config: &ClientShellConfig,
     hits: &mut ShellHitMap,
 ) -> bool {
@@ -121,12 +121,13 @@ pub(super) fn render_agent_panel_header(
             .add_modifier(Modifier::BOLD),
     );
     // Fork: the number of agents in the list follows the title.
+    let count_text = format!("· {}", agent_statuses.len());
     put_text(
         buffer,
         area.x + 8,
         area.y + 1,
         area.width.saturating_sub(8),
-        &format!("· {agent_count}"),
+        &count_text,
         Style::default().fg(config.palette.overlay0),
     );
     let sort_label = agent_view_label.unwrap_or(match config.agent_panel_sort {
@@ -159,7 +160,70 @@ pub(super) fn render_agent_panel_header(
             })
             .add_modifier(Modifier::BOLD),
     );
+    render_agent_status_counts(
+        buffer,
+        area.x + 8 + display_width(&count_text) as u16 + 1,
+        area.y + 1,
+        sort_rect.x.saturating_sub(1),
+        agent_statuses,
+        config,
+    );
     true
+}
+
+// Fork: how many agents are blocked, done, working and idle follows the count,
+// `· ● 2  ● 3  ○ 19` in their rows' colours. A status no agent has is left out, and so
+// is one that would run into the sort label, idle first.
+fn render_agent_status_counts(
+    buffer: &mut Buffer,
+    mut x: u16,
+    y: u16,
+    right: u16,
+    agent_statuses: &[crate::api::schema::AgentStatus],
+    config: &ClientShellConfig,
+) {
+    use crate::api::schema::AgentStatus;
+    let mut separator = Some("· ");
+    for status in [
+        AgentStatus::Blocked,
+        AgentStatus::Done,
+        AgentStatus::Working,
+        AgentStatus::Idle,
+    ] {
+        let count = agent_statuses
+            .iter()
+            .filter(|candidate| **candidate == status)
+            .count();
+        if count == 0 {
+            continue;
+        }
+        let text = format!("{} {count}", status_icon(status, config.status_indicators));
+        let width = display_width(&text) as u16;
+        let lead = separator.map_or(0, |separator| display_width(separator) as u16);
+        if x.saturating_add(lead + width) > right {
+            return;
+        }
+        if let Some(separator) = separator.take() {
+            put_text(
+                buffer,
+                x,
+                y,
+                lead,
+                separator,
+                Style::default().fg(config.palette.overlay0),
+            );
+            x = x.saturating_add(lead);
+        }
+        put_text(
+            buffer,
+            x,
+            y,
+            width,
+            &text,
+            Style::default().fg(status_color(status, &config.palette)),
+        );
+        x = x.saturating_add(width + 2);
+    }
 }
 
 pub(super) fn render_agent_list<T>(

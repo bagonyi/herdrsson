@@ -122,7 +122,9 @@ Claude agent's prompt cache, which empties as its hour runs out, the last segmen
   counts every reading straight away.
 - The agents panel can be hidden, giving the spaces list the whole sidebar.
 - The agents panel's title shows how many agents it lists, `agents · 24`, counting only those a
-  plugin's agent view shows.
+  plugin's agent view shows, then how many are blocked, done, working and idle, `· ● 2  ● 3  ○ 19`, in
+  their rows' colours. A status no agent has is left out, and in a narrow sidebar so are those
+  that don't fit, idle first.
 - A custom token in an agent or space row can show a Unix time in seconds as the time since
   then, counting up as you watch: `10s ago` (in steps of 10 seconds), `5m ago`, `3h ago`,
   `2d ago`. While an agent works, its row says `working` instead. Write it as
