@@ -363,6 +363,63 @@ rows = [[{ token = "$load", rules = [{ lt = 50, dim = true }] }]]
     }
 
     #[test]
+    fn colour_scales_blend_by_number_under_rules_in_agent_and_space_rows() {
+        let config: crate::config::SidebarConfig = toml::from_str(
+            r##"
+[agents]
+rows = [[{ token = "$size", fg = "#123456", fg_scale = [{ at = 100_000, fg = "#000000" }, { at = 200_000, fg = "#ffffff" }], rules = [{ equals = "1.0M", fg = "#ff0000" }] }]]
+[spaces]
+rows = [[{ token = "$size", fg_scale = [{ at = 0, fg = "#000000" }, { at = 1_000, fg = "#ffffff" }] }]]
+"##,
+        )
+        .unwrap();
+        let mut entry = entry();
+        for (value, agent, space) in [
+            ("70.0k", (0, 0, 0), Some((255, 255, 255))),
+            ("150.0k", (128, 128, 128), Some((255, 255, 255))),
+            ("500", (0, 0, 0), Some((128, 128, 128))),
+            ("1.0M", (255, 0, 0), Some((255, 255, 255))),
+            ("unknown", (0x12, 0x34, 0x56), None),
+        ] {
+            entry.tokens.insert("size".into(), value.into());
+            let rows = agent_rows(&config.agents, context(&entry), "working");
+            assert_eq!(
+                rows[0][0].style.fg.map(|fg| fg.ratatui()),
+                Some(ratatui::style::Color::Rgb(agent.0, agent.1, agent.2)),
+                "{value}"
+            );
+            let spaces = space_rows(
+                &config.spaces,
+                SpaceTokenContext {
+                    workspace: "repo",
+                    branch: None,
+                    state_text: "working",
+                    ahead_behind: None,
+                    suppress_git_details: false,
+                    tokens: &entry.tokens,
+                },
+            );
+            assert_eq!(
+                spaces[0][0].style.fg.map(|fg| fg.ratatui()),
+                space.map(|(r, g, b)| ratatui::style::Color::Rgb(r, g, b)),
+                "{value}"
+            );
+        }
+        let error = toml::from_str::<AgentsSidebarConfig>(
+            r##"rows = [[{ token = "state_icon", fg_scale = [{ at = 1, fg = "#000" }] }]]"##,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("text-valued token"), "{error}");
+        let config: AgentsSidebarConfig = toml::from_str(
+            r##"rows = [[{ token = "$size", fg_scale = [{ at = 1, fg = "#000" }] }]]"##,
+        )
+        .unwrap();
+        let round_trip: AgentsSidebarConfig =
+            toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(round_trip, config);
+    }
+
+    #[test]
     fn conditional_hide_removes_tokens_and_empty_rows() {
         let config: crate::config::SidebarConfig = toml::from_str(
             r##"
