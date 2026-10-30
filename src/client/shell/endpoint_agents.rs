@@ -57,7 +57,17 @@ pub(super) fn render_expanded(
         buffer,
         area,
         agent_view_label,
-        rows.len(),
+        // Fork: a disconnected machine's agents count in the total, not by their stale status.
+        &rows
+            .iter()
+            .map(|row| {
+                if row.stale {
+                    crate::api::schema::AgentStatus::Unknown
+                } else {
+                    row.agent.status
+                }
+            })
+            .collect::<Vec<_>>(),
         config,
         hits,
     ) {

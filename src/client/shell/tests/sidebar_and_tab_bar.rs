@@ -240,3 +240,76 @@ fn agents_header_shows_how_many_agents_it_lists() {
         "a plugin's agent view counts the agents it lists"
     );
 }
+
+#[test]
+fn agents_header_counts_agents_by_status_in_their_colours() {
+    let agent = |pane_id: &str, agent_status: AgentStatus| ClientShellAgent {
+        pane_id: pane_id.into(),
+        workspace_id: "ws_1".into(),
+        tab_id: "tab_1".into(),
+        name: None,
+        display_agent: None,
+        agent: Some("pi".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status,
+        state_change_seq: 1,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused: false,
+    };
+    let mut projected = snapshot();
+    projected.agents = vec![
+        agent("pane_a", AgentStatus::Idle),
+        agent("pane_b", AgentStatus::Working),
+        agent("pane_c", AgentStatus::Idle),
+        agent("pane_d", AgentStatus::Blocked),
+        agent("pane_e", AgentStatus::Unknown),
+    ];
+    let header = |sidebar_width: u16| {
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+        state.sidebar_width = sidebar_width;
+        state.sidebar_width_manual = true;
+        state.set_snapshot(Box::new(projected.clone()));
+        state.set_pane_surface(surface());
+        let frame = state.compose(106, 30).expect("expanded sidebar");
+        let row = frame
+            .cells
+            .chunks(frame.width as usize)
+            .find(|row| {
+                row.iter()
+                    .map(|cell| cell.symbol.as_str())
+                    .collect::<String>()
+                    .starts_with(" agents")
+            })
+            .expect("agents header")
+            .to_vec();
+        (
+            row.iter()
+                .map(|cell| cell.symbol.as_str())
+                .collect::<String>(),
+            row,
+            state.config.palette.clone(),
+        )
+    };
+
+    let (text, cells, palette) = header(36);
+    assert!(
+        text.starts_with(" agents · 5 · ● 1  ● 1  ○ 2 "),
+        "blocked, working and idle follow the count, unknown only in the total: {text:?}"
+    );
+    let color = crate::protocol::color_to_u32;
+    assert_eq!(cells[12].fg, color(palette.overlay0), "separator");
+    assert_eq!(cells[14].fg, color(palette.red), "blocked");
+    assert_eq!(cells[19].fg, color(palette.yellow), "working");
+    assert_eq!(cells[24].fg, color(palette.green), "idle");
+
+    let (text, cells, _) = header(26);
+    assert!(
+        text.starts_with(" agents · 5 · ● 1 ") && text.matches('●').count() == 1,
+        "a narrow sidebar leaves out the idle and working counts rather than run into the sort label: {text:?}"
+    );
+    assert_eq!(cells[14].fg, color(palette.red), "blocked stays");
+    assert!(text.contains(" grouped│"), "the sort label stays whole");
+}
