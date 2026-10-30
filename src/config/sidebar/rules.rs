@@ -9,6 +9,8 @@ pub struct SidebarTokenRule {
     ignore_case: bool,
     style: SidebarTokenStyle,
     hide: Option<bool>,
+    /// Fork: shown in place of the token's value (`text = "..."`).
+    text: Option<String>,
 }
 
 // Deserialization rejects non-finite thresholds, so equality is reflexive.
@@ -48,6 +50,8 @@ struct RawRule {
     strikethrough: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     hide: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<String>,
 }
 
 impl TryFrom<RawRule> for SidebarTokenRule {
@@ -97,6 +101,7 @@ impl TryFrom<RawRule> for SidebarTokenRule {
             condition,
             ignore_case: raw.ignore_case.unwrap_or(false),
             hide: raw.hide,
+            text: raw.text,
             style: SidebarTokenStyle {
                 fg: raw.fg,
                 bold: raw.bold,
@@ -117,6 +122,7 @@ impl From<SidebarTokenRule> for RawRule {
             dim: rule.style.dim,
             strikethrough: rule.style.strikethrough,
             hide: rule.hide,
+            text: rule.text,
             ..Self::default()
         };
         match rule.condition {
@@ -198,6 +204,15 @@ pub(super) fn matching_style(
         }
     }
     Some(base)
+}
+
+/// Fork: the `text` of the first rule `value` matches, if it has one.
+pub(super) fn matching_text<'a>(rules: &'a [SidebarTokenRule], value: &str) -> Option<&'a str> {
+    let mut numeric = None;
+    rules
+        .iter()
+        .find(|rule| rule.matches(value, &mut numeric))
+        .and_then(|rule| rule.text.as_deref())
 }
 
 #[cfg(test)]

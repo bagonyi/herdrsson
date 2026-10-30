@@ -104,21 +104,23 @@ pub struct SidebarTokenStyle {
     pub dim: Option<bool>,
     /// Fork: a line through the token (`strikethrough = true`), as for a time that has passed.
     pub strikethrough: Option<bool>,
-    /// Fork: how a custom token's value is shown (`format = "ago"`, `"left"` or `"bar"`). Rules
-    /// can't change it.
+    /// Fork: how a custom token's value is shown (`format = "ago"`, `"left"`, `"bar"` or
+    /// `"bar_left"`). Rules can't change it.
     pub format: Option<SidebarTokenFormat>,
 }
 
 /// Fork: `ago` shows a custom token holding a Unix time in seconds as the time since then,
 /// e.g. `5m ago`, and `left` as the time until then, e.g. `5m left`; `bar` shows one holding
-/// `FROM/UNTIL` as the share of that time still left, e.g. `▰▰▰▰▱▱` (see
-/// `crate::ui::sidebar::ago`).
+/// `FROM/UNTIL` as the share of that time still left, e.g. `▰▰▰▰▱▱`, and `bar_left` that bar
+/// with the time left after it, e.g. `▰▰▰▰▱▱ 38m` (see `crate::ui::sidebar::ago`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SidebarTokenFormat {
     Ago,
     Left,
     Bar,
+    #[serde(rename = "bar_left")]
+    BarLeft,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,6 +165,14 @@ impl AgentSidebarToken {
         }
     }
 
+    /// Fork: the text a matching rule shows in place of `value` (`text = "..."`).
+    pub(crate) fn text_for_value(&self, value: &str) -> Option<&str> {
+        match self {
+            Self::Styled { rules, .. } => rules::matching_text(rules, value),
+            _ => None,
+        }
+    }
+
     pub(crate) fn parts(&self) -> (&Self, SidebarTokenStyle) {
         match self {
             Self::Styled { token, style, .. } => (token, *style),
@@ -176,6 +186,14 @@ impl SpaceSidebarToken {
         match self {
             Self::Styled { style, rules, .. } => rules::matching_style(rules, *style, value),
             _ => Some(SidebarTokenStyle::default()),
+        }
+    }
+
+    /// Fork: the text a matching rule shows in place of `value` (`text = "..."`).
+    pub(crate) fn text_for_value(&self, value: &str) -> Option<&str> {
+        match self {
+            Self::Styled { rules, .. } => rules::matching_text(rules, value),
+            _ => None,
         }
     }
 
