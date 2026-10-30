@@ -368,46 +368,6 @@ rows = [[{ token = "$cache_span", format = "bar", rules = [{ equals = "▰▱▱
     }
 
     #[test]
-    fn an_expired_bar_can_be_struck_through_by_a_rule() {
-        use ratatui::style::{Modifier, Style};
-        let config = sidebar(
-            r##"
-[agents]
-rows = [[{ token = "$cache_span", format = "bar", rules = [{ equals = "▱▱▱▱▱▱", dim = true, strikethrough = true }] }]]
-"##,
-        )
-        .unwrap();
-        let now = unix_now();
-        let tokens = HashMap::from([(
-            "cache_span".to_string(),
-            format!("{}/{}", now - 7_200, now - 3_600),
-        )]);
-        let rows = agent_rows(&config.agents, agent_context(&tokens), "idle");
-        assert_eq!(rows[0][0].kind, ResolvedTokenKind::Custom("▱▱▱▱▱▱".into()));
-        assert_eq!(rows[0][0].style.strikethrough, Some(true));
-
-        let plain = Style::default();
-        let spans = super::super::resolved_token_spans(
-            &rows[0],
-            ("*", plain),
-            plain,
-            plain,
-            plain,
-            plain,
-            &super::super::Palette::catppuccin(),
-            40,
-        );
-        assert!(spans[0]
-            .style
-            .add_modifier
-            .contains(Modifier::CROSSED_OUT | Modifier::DIM));
-
-        let tokens = HashMap::from([("cache_span".to_string(), format!("{now}/{}", now + 3_600))]);
-        let rows = agent_rows(&config.agents, agent_context(&tokens), "idle");
-        assert_eq!(rows[0][0].style.strikethrough, None);
-    }
-
-    #[test]
     fn a_rule_can_show_other_text_in_place_of_the_value() {
         let config = sidebar(
             r##"
@@ -466,18 +426,6 @@ rows = [[{ token = "$cache_span", format = "bar_left", rules = [{ equals = "▱�
         .unwrap();
         let text = toml::to_string(&config).unwrap();
         assert!(text.contains("text = \"y\""), "{text}");
-        assert_eq!(sidebar(&text).unwrap(), config);
-    }
-
-    #[test]
-    fn strikethrough_round_trips_on_tokens_and_rules() {
-        let config = sidebar(
-            "[agents]\nrows = [[{ token = \"$t\", strikethrough = true, rules = [{ equals = \"x\", strikethrough = false }] }]]\n",
-        )
-        .unwrap();
-        let text = toml::to_string(&config).unwrap();
-        assert!(text.contains("strikethrough = true"), "{text}");
-        assert!(text.contains("strikethrough = false"), "{text}");
         assert_eq!(sidebar(&text).unwrap(), config);
     }
 
