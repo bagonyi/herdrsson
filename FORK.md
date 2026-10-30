@@ -146,6 +146,11 @@ Claude agent's prompt cache, which empties as its hour runs out, the last segmen
 - A rule can show other text in its token's place, `text = "..."`:
   `{ equals = "▱▱▱▱▱▱", text = "▱▱▱▱▱▱ expired" }` says the cache has expired next to its empty
   bar.
+- A sidebar token can take its colour from a scale, `fg_scale`, blended between stops by the
+  number it shows, which may end in `k` or `M` as token counts do (`70.0k`, `1.2M`):
+  `fg_scale = [{ at = 75_000, fg = "#9ece6a" }, { at = 225_000, fg = "#e0af68" }]` turns
+  Claude Cache Timer's `$cache_tokens` from green to yellow as the context grows. Below the
+  first stop and above the last it keeps their colour, and a matching rule's `fg` still wins.
 - Notifications leave out the 🟢 ⏳ 🟠 marker that [Tab Status](https://github.com/bagonyi/herdr-tab-status)
   puts in front of a tab's name. The plugin changes it only after the notification is made, so a
   "finished" notification would still show ⏳.

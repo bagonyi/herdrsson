@@ -1,6 +1,8 @@
 mod rules;
+mod scale;
 
 pub use rules::SidebarTokenRule;
+pub use scale::SidebarColorStop;
 
 use std::collections::BTreeMap;
 
@@ -137,6 +139,8 @@ pub enum AgentSidebarToken {
         token: Box<AgentSidebarToken>,
         style: SidebarTokenStyle,
         rules: Vec<SidebarTokenRule>,
+        /// Fork: `fg_scale`, the colour blended by the number the token shows.
+        fg_scale: Vec<SidebarColorStop>,
     },
 }
 
@@ -152,13 +156,20 @@ pub enum SpaceSidebarToken {
         token: Box<SpaceSidebarToken>,
         style: SidebarTokenStyle,
         rules: Vec<SidebarTokenRule>,
+        /// Fork: `fg_scale`, the colour blended by the number the token shows.
+        fg_scale: Vec<SidebarColorStop>,
     },
 }
 
 impl AgentSidebarToken {
     pub(crate) fn style_for_value(&self, value: &str) -> Option<SidebarTokenStyle> {
         match self {
-            Self::Styled { style, rules, .. } => rules::matching_style(rules, *style, value),
+            Self::Styled {
+                style,
+                rules,
+                fg_scale,
+                ..
+            } => rules::matching_style(rules, scaled_style(*style, fg_scale, value), value),
             _ => Some(SidebarTokenStyle::default()),
         }
     }
@@ -182,7 +193,12 @@ impl AgentSidebarToken {
 impl SpaceSidebarToken {
     pub(crate) fn style_for_value(&self, value: &str) -> Option<SidebarTokenStyle> {
         match self {
-            Self::Styled { style, rules, .. } => rules::matching_style(rules, *style, value),
+            Self::Styled {
+                style,
+                rules,
+                fg_scale,
+                ..
+            } => rules::matching_style(rules, scaled_style(*style, fg_scale, value), value),
             _ => Some(SidebarTokenStyle::default()),
         }
     }
@@ -203,6 +219,18 @@ impl SpaceSidebarToken {
     }
 }
 
+/// Fork: the style with the colour `fg_scale` gives `value`, which rules can still change.
+fn scaled_style(
+    style: SidebarTokenStyle,
+    fg_scale: &[SidebarColorStop],
+    value: &str,
+) -> SidebarTokenStyle {
+    SidebarTokenStyle {
+        fg: scale::color_at(fg_scale, value).or(style.fg),
+        ..style
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawStyledSidebarToken {
@@ -217,7 +245,17 @@ struct RawStyledSidebarToken {
     rules: Vec<SidebarTokenRule>,
     #[serde(default)]
     format: Option<SidebarTokenFormat>,
+    #[serde(default)]
+    fg_scale: Vec<SidebarColorStop>,
 }
+
+/// A token's name, style, rules and colour scale, as written in the config.
+type RawTokenParts = (
+    String,
+    Option<SidebarTokenStyle>,
+    Vec<SidebarTokenRule>,
+    Vec<SidebarColorStop>,
+);
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -227,9 +265,9 @@ enum RawSidebarToken {
 }
 
 impl RawSidebarToken {
-    fn parts(self) -> Result<(String, Option<SidebarTokenStyle>, Vec<SidebarTokenRule>), String> {
+    fn parts(self) -> Result<RawTokenParts, String> {
         match self {
-            Self::Plain(token) => Ok((token, None, Vec::new())),
+            Self::Plain(token) => Ok((token, None, Vec::new(), Vec::new())),
             Self::Styled(token) => {
                 if token.rules.len() > 16 {
                     return Err("sidebar tokens may contain at most 16 rules".into());
@@ -242,6 +280,12 @@ impl RawSidebarToken {
                 if token.format.is_some() && !token.token.starts_with('$') {
                     return Err("sidebar token format applies only to custom `$` tokens".into());
                 }
+                scale::validate(&token.fg_scale)?;
+                if !token.fg_scale.is_empty()
+                    && matches!(token.token.as_str(), "state_icon" | "git_status")
+                {
+                    return Err("sidebar fg_scale requires a text-valued token".into());
+                }
                 Ok((
                     token.token,
                     Some(SidebarTokenStyle {
@@ -251,6 +295,7 @@ impl RawSidebarToken {
                         format: token.format,
                     }),
                     token.rules,
+                    token.fg_scale,
                 ))
             }
         }
@@ -284,6 +329,7 @@ fn serialize_styled_token<S>(
     name: String,
     style: SidebarTokenStyle,
     rules: &[SidebarTokenRule],
+    fg_scale: &[SidebarColorStop],
     serializer: S,
 ) -> Result<S::Ok, S::Error>
 where
@@ -306,6 +352,9 @@ where
     }
     if let Some(format) = style.format {
         map.serialize_entry("format", &format)?;
+    }
+    if !fg_scale.is_empty() {
+        map.serialize_entry("fg_scale", fg_scale)?;
     }
     map.end()
 }
@@ -348,7 +397,10 @@ impl Serialize for AgentSidebarToken {
                 token,
                 style,
                 rules,
-            } => serialize_styled_token(agent_token_name(token), *style, rules, serializer),
+                fg_scale,
+            } => {
+                serialize_styled_token(agent_token_name(token), *style, rules, fg_scale, serializer)
+            }
             token => serializer.serialize_str(&agent_token_name(token)),
         }
     }
@@ -365,7 +417,7 @@ impl<'de> Deserialize<'de> for AgentSidebarToken {
     where
         D: serde::Deserializer<'de>,
     {
-        let (value, style, rules) = RawSidebarToken::deserialize(deserializer)?
+        let (value, style, rules, fg_scale) = RawSidebarToken::deserialize(deserializer)?
             .parts()
             .map_err(serde::de::Error::custom)?;
         let token = parse_sidebar_token(
@@ -387,6 +439,7 @@ impl<'de> Deserialize<'de> for AgentSidebarToken {
             token: Box::new(token),
             style,
             rules,
+            fg_scale,
         }))
     }
 }
@@ -401,7 +454,10 @@ impl Serialize for SpaceSidebarToken {
                 token,
                 style,
                 rules,
-            } => serialize_styled_token(space_token_name(token), *style, rules, serializer),
+                fg_scale,
+            } => {
+                serialize_styled_token(space_token_name(token), *style, rules, fg_scale, serializer)
+            }
             token => serializer.serialize_str(&space_token_name(token)),
         }
     }
@@ -418,7 +474,7 @@ impl<'de> Deserialize<'de> for SpaceSidebarToken {
     where
         D: serde::Deserializer<'de>,
     {
-        let (value, style, rules) = RawSidebarToken::deserialize(deserializer)?
+        let (value, style, rules, fg_scale) = RawSidebarToken::deserialize(deserializer)?
             .parts()
             .map_err(serde::de::Error::custom)?;
         let token = parse_sidebar_token(
@@ -436,6 +492,7 @@ impl<'de> Deserialize<'de> for SpaceSidebarToken {
             token: Box::new(token),
             style,
             rules,
+            fg_scale,
         }))
     }
 }
