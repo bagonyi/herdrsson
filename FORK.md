@@ -33,7 +33,7 @@ in one of its spaces. Three separate Herdr plugins add the rest:
 tab names, [Agent Recency](https://github.com/bagonyi/herdr-agent-recency) lists the agents
 panel by each agent's last activity, which this fork shows as `3m ago`, and
 [Claude Cache Timer](https://github.com/bagonyi/herdr-claude-cache-timer) adds the bar of each
-idle Claude agent's prompt cache, which empties as its hour runs out, the last segment orange.
+Claude agent's prompt cache, which empties as its hour runs out, the last segment orange.
 
 ## what's changed
 
