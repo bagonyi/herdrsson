@@ -529,6 +529,57 @@ pub struct AgentsSidebarConfig {
     /// Hide the agents panel; the spaces list takes the whole sidebar.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
+    /// Fork: agents not active for a while, `[ui.sidebar.agents.older]`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub older: Option<OlderAgentsConfig>,
+}
+
+/// Fork: agents not active for a while get rows of their own, and a line above the first of
+/// them. An agent counts as older once `after_minutes` have passed since the Unix time in its
+/// custom `token` (e.g. `$last_at`), or when it has no such time; a working agent never does.
+/// Unknown keys are warned about and ignored, as elsewhere in `[ui.sidebar.agents]`, rather than
+/// failing the whole config.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct OlderAgentsConfig {
+    #[serde(deserialize_with = "deserialize_custom_token")]
+    pub token: String,
+    pub after_minutes: u64,
+    /// The text of the line above the first older agent, `""` for a bare line, none without.
+    /// The line shows only where the older agents come last, after the others.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub divider: Option<String>,
+    /// Rows for older agents, in place of `rows` and `rows_by_agent`; theirs without.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_sidebar_rows",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rows: Option<AgentSidebarRows>,
+}
+
+impl OlderAgentsConfig {
+    /// `token` without its `$`, as agents' tokens are named.
+    pub(crate) fn token_name(&self) -> &str {
+        self.token.strip_prefix('$').unwrap_or(&self.token)
+    }
+}
+
+fn deserialize_custom_token<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let token = String::deserialize(deserializer)?;
+    parse_sidebar_token::<String>(token.clone(), &[]).map_err(serde::de::Error::custom)?;
+    Ok(token)
+}
+
+fn deserialize_optional_sidebar_rows<'de, D>(
+    deserializer: D,
+) -> Result<Option<AgentSidebarRows>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_sidebar_rows(deserializer).map(Some)
 }
 
 impl AgentsSidebarConfig {
@@ -536,6 +587,15 @@ impl AgentsSidebarConfig {
         agent
             .and_then(|agent| self.rows_by_agent.get(crate::detect::agent_label(agent)))
             .unwrap_or(&self.rows)
+    }
+
+    /// Fork: an agent's rows, an older agent's from `[ui.sidebar.agents.older]` when it has them.
+    pub(crate) fn rows_for(&self, agent: Option<Agent>, older: bool) -> &AgentSidebarRows {
+        self.older
+            .as_ref()
+            .and_then(|config| config.rows.as_ref())
+            .filter(|_| older)
+            .unwrap_or_else(|| self.rows_for_agent(agent))
     }
 }
 
@@ -554,6 +614,7 @@ impl Default for AgentsSidebarConfig {
             rows_by_agent: BTreeMap::new(),
             row_gap: DEFAULT_SIDEBAR_ROW_GAP,
             hidden: false,
+            older: None,
         }
     }
 }
@@ -828,5 +889,66 @@ rows = [[{ token = "$status", rules = [{ contains = "error", bold = true }] }]]
                 "accepted key {key:?}"
             );
         }
+    }
+
+    #[test]
+    fn older_agents_take_a_custom_token_minutes_a_divider_and_rows_of_their_own() {
+        let agents = |toml: &str| {
+            toml::from_str::<crate::config::Config>(&format!("[ui.sidebar.agents.older]\n{toml}"))
+                .map(|config| config.ui.sidebar.agents)
+        };
+        let config = agents(
+            "token = \"$last_at\"\nafter_minutes = 120\ndivider = \"earlier\"\nrows = [[\"state_icon\", \"workspace\"]]\n",
+        )
+        .expect("older agents");
+        let older = config.older.as_ref().expect("older");
+        assert_eq!(older.token_name(), "last_at");
+        assert_eq!(older.after_minutes, 120);
+        assert_eq!(older.divider.as_deref(), Some("earlier"));
+        let older_rows = vec![vec![
+            AgentSidebarToken::StateIcon,
+            AgentSidebarToken::Workspace,
+        ]];
+        assert_eq!(config.rows_for(Some(Agent::Claude), true), &older_rows);
+        assert_eq!(config.rows_for(Some(Agent::Claude), false), &config.rows);
+
+        let config = agents("token = \"$last_at\"\nafter_minutes = 120\n").expect("no rows");
+        assert_eq!(
+            config.rows_for(None, true),
+            &config.rows,
+            "without rows of their own older agents keep the usual ones"
+        );
+        assert_eq!(config.older.and_then(|older| older.divider), None);
+
+        for invalid in [
+            "token = \"last_at\"\nafter_minutes = 120\n",
+            "token = \"$last.at\"\nafter_minutes = 120\n",
+            "token = \"$last_at\"\n",
+            "after_minutes = 120\n",
+            "token = \"$last_at\"\nafter_minutes = \"2h\"\n",
+            "token = \"$last_at\"\nafter_minutes = 120\nrows = [[\"summary\"]]\n",
+        ] {
+            assert!(agents(invalid).is_err(), "accepted {invalid:?}");
+        }
+
+        let mut ignored = Vec::new();
+        let config: crate::config::Config = serde_ignored::deserialize(
+            toml::Deserializer::new(
+                "[ui.sidebar.agents.older]\ntoken = \"$last_at\"\nafter_minutes = 120\ndividr = \"earlier\"\n",
+            ),
+            |path| ignored.push(path.to_string()),
+        )
+        .expect("a typo is ignored, not fatal");
+        // `?` is the Option; Herdr's warning leaves it out: `ui.sidebar.agents.older.dividr`.
+        assert_eq!(ignored, ["ui.sidebar.agents.older.?.dividr"]);
+        assert_eq!(
+            config
+                .ui
+                .sidebar
+                .agents
+                .older
+                .map(|older| older.after_minutes),
+            Some(120)
+        );
     }
 }

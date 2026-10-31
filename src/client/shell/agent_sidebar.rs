@@ -15,6 +15,8 @@ pub(super) struct AgentRow {
     pub(super) status: crate::api::schema::AgentStatus,
     pub(super) focused: bool,
     pub(super) rows: Vec<Vec<crate::ui::ResolvedToken>>,
+    /// Fork: the agent counts as older (`[ui.sidebar.agents.older]`).
+    pub(super) older: bool,
 }
 
 pub(super) fn ordered_agent_pane_ids(
@@ -81,6 +83,7 @@ pub(super) fn render_agent_panel(
         agent_scroll,
         hits,
         |row| row.rows.len(),
+        |row| row.older,
         |buffer, rect, row, hits| {
             hits.agents.push((rect, row.pane_id.clone()));
             render_agent_row(buffer, rect, row, config);
@@ -235,6 +238,7 @@ pub(super) fn render_agent_list<T>(
     agent_scroll: &mut usize,
     hits: &mut ShellHitMap,
     row_lines: impl Fn(&T) -> usize,
+    row_older: impl Fn(&T) -> bool,
     mut render_row: impl FnMut(&mut Buffer, Rect, &T, &mut ShellHitMap),
 ) {
     let body = Rect::new(
@@ -265,17 +269,8 @@ pub(super) fn render_agent_list<T>(
         .iter()
         .map(|row| row_lines(row).max(1).min(u16::MAX as usize) as u16)
         .collect::<Vec<_>>();
-    let gaps = rows
-        .iter()
-        .enumerate()
-        .map(|(index, _)| {
-            if index + 1 < rows.len() {
-                config.agents.row_gap
-            } else {
-                0
-            }
-        })
-        .collect::<Vec<_>>();
+    let older = rows.iter().map(row_older).collect::<Vec<_>>();
+    let (gaps, divider_after) = agent_list_gaps(&older, &config.agents);
     let metrics =
         super::scroll::list_scroll_metrics(&row_heights, &gaps, body.height, *agent_scroll);
     hits.agent_max_scroll = metrics.max_offset_from_bottom;
@@ -293,13 +288,15 @@ pub(super) fn render_agent_list<T>(
         }
         let rect = Rect::new(body.x, y, content_width, height);
         render_row(buffer, rect, row, hits);
-        y = y
-            .saturating_add(height)
-            .saturating_add(if index + 1 < rows.len() {
-                config.agents.row_gap
-            } else {
-                0
-            });
+        y = y.saturating_add(height);
+        if divider_after == Some(index) {
+            // In the middle of the gap, or one line nearer the older agents it heads.
+            let divider_y = y.saturating_add(config.agents.row_gap.div_ceil(2));
+            if divider_y < body.bottom() {
+                render_older_divider(buffer, body.x, divider_y, content_width, config);
+            }
+        }
+        y = y.saturating_add(gaps[index]);
     }
 
     if show_scrollbar {
@@ -307,6 +304,65 @@ pub(super) fn render_agent_list<T>(
         hits.agent_scrollbar = track;
         super::scroll::render_list_scrollbar(buffer, track, metrics, &config.palette);
     }
+}
+
+/// The lines after each agent: `row_gap` between agents, and one more after the last agent
+/// before the older ones for the line above them (`[ui.sidebar.agents.older] divider`). That
+/// line shows only where the older agents come last, after at least one other.
+pub(super) fn agent_list_gaps(
+    older: &[bool],
+    agents: &crate::config::AgentsSidebarConfig,
+) -> (Vec<u16>, Option<usize>) {
+    let divider_after = agents
+        .older
+        .as_ref()
+        .and_then(|config| config.divider.as_ref())
+        .and_then(|_| {
+            let first = older.iter().position(|older| *older)?;
+            (first > 0 && older[first..].iter().all(|older| *older)).then(|| first - 1)
+        });
+    let gaps = (0..older.len())
+        .map(|index| {
+            if index + 1 == older.len() {
+                0
+            } else {
+                agents
+                    .row_gap
+                    .saturating_add(u16::from(divider_after == Some(index)))
+            }
+        })
+        .collect();
+    (gaps, divider_after)
+}
+
+/// Fork: the line above the first older agent, its text in the middle: `──── earlier ────`.
+fn render_older_divider(
+    buffer: &mut Buffer,
+    x: u16,
+    y: u16,
+    width: u16,
+    config: &ClientShellConfig,
+) {
+    let text = config
+        .agents
+        .older
+        .as_ref()
+        .and_then(|older| older.divider.as_deref())
+        .filter(|text| !text.is_empty())
+        .map(|text| format!(" {text} "))
+        .unwrap_or_default();
+    let text_width = display_width(&text).min(width as usize);
+    let left = (width as usize - text_width) / 2;
+    let right = width as usize - text_width - left;
+    // Not `surface_dim`, the panel's own top line: in dark themes that is the background colour
+    // itself, and the line would vanish on a black terminal.
+    let rule = Style::default().fg(config.palette.surface1);
+    Paragraph::new(Line::from(vec![
+        ratatui::text::Span::styled("─".repeat(left), rule),
+        ratatui::text::Span::styled(text, Style::default().fg(config.palette.overlay0)),
+        ratatui::text::Span::styled("─".repeat(right), rule),
+    ]))
+    .render(Rect::new(x, y, width, 1), buffer);
 }
 
 pub(super) fn agent_rows(
@@ -367,6 +423,8 @@ pub(super) fn agent_row(
         .agent
         .as_deref()
         .and_then(crate::detect::parse_agent_label);
+    let working = agent.agent_status == crate::api::schema::AgentStatus::Working;
+    let older = crate::ui::sidebar_agent_is_older(&config.agents, &tokens, working);
     let mut rows = crate::ui::sidebar_agent_rows(
         &config.agents,
         crate::ui::AgentTokenContext {
@@ -382,11 +440,12 @@ pub(super) fn agent_row(
             terminal_title_stripped: agent.terminal_title_stripped.as_deref(),
             canonical_agent,
             tokens: &tokens,
+            older,
         },
         state_text,
     );
     // Fork: a working agent shows `working` in place of its `ago` times.
-    if agent.agent_status == crate::api::schema::AgentStatus::Working {
+    if working {
         crate::ui::sidebar_show_working(&mut rows);
     }
     Some(AgentRow {
@@ -394,6 +453,7 @@ pub(super) fn agent_row(
         status: agent.agent_status,
         focused: agent.focused,
         rows,
+        older,
     })
 }
 

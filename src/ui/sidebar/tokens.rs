@@ -78,6 +78,8 @@ pub(crate) struct AgentTokenContext<'a> {
     pub(crate) terminal_title_stripped: Option<&'a str>,
     pub(crate) canonical_agent: Option<crate::detect::Agent>,
     pub(crate) tokens: &'a std::collections::HashMap<String, String>,
+    /// Fork: the agent counts as older (`[ui.sidebar.agents.older]`), so it gets older agents' rows.
+    pub(crate) older: bool,
 }
 
 pub(crate) fn agent_rows(
@@ -86,7 +88,7 @@ pub(crate) fn agent_rows(
     state_text: &str,
 ) -> Vec<Vec<ResolvedToken>> {
     config
-        .rows_for_agent(context.canonical_agent)
+        .rows_for(context.canonical_agent, context.older)
         .iter()
         .filter_map(|row| {
             let resolved = row
@@ -251,6 +253,7 @@ mod tests {
             terminal_title_stripped: entry.terminal_title_stripped.as_deref(),
             canonical_agent: entry.canonical_agent,
             tokens: &entry.tokens,
+            older: false,
         }
     }
 

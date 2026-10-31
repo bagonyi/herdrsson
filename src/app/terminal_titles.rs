@@ -14,6 +14,8 @@ impl App {
         let config = &self.state.sidebar_agents;
         std::iter::once(&config.rows)
             .chain(config.rows_by_agent.values())
+            // Fork: older agents' rows (`[ui.sidebar.agents.older]`).
+            .chain(config.older.iter().filter_map(|older| older.rows.as_ref()))
             .flatten()
             .flatten()
             .any(|token| match token.parts().0 {
@@ -231,6 +233,27 @@ mod tests {
             vec![vec![crate::config::AgentSidebarToken::TerminalTitle]],
         );
         assert!(app.terminal_title_sidebar_changed(&spinner_only));
+    }
+
+    #[test]
+    fn sidebar_redraws_for_a_title_only_older_agents_show() {
+        let event_hub = crate::api::EventHub::default();
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            event_hub,
+        );
+        app.state.sidebar_agents = toml::from_str(
+            "rows = [[\"agent\"]]\n[older]\ntoken = \"$last_at\"\nafter_minutes = 120\nrows = [[\"terminal_title_stripped\"]]\n",
+        )
+        .expect("agents config");
+        assert!(app.terminal_title_sidebar_changed(&TerminalTitleChanges {
+            stripped_changed: true,
+            ..TerminalTitleChanges::default()
+        }));
     }
 
     fn pane_updated_events(event_hub: &crate::api::EventHub) -> usize {

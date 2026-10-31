@@ -151,6 +151,14 @@ Claude agent's prompt cache, which empties as its hour runs out, the last segmen
   `fg_scale = [{ at = 75_000, fg = "#9ece6a" }, { at = 225_000, fg = "#e0af68" }]` turns
   Claude Cache Timer's `$cache_tokens` from green to yellow as the context grows. Below the
   first stop and above the last it keeps their colour, and a matching rule's `fg` still wins.
+- Agents not active for a while can look different, to tell them at a glance from the ones you
+  are working with. Under `[ui.sidebar.agents.older]`, an agent counts as older once
+  `after_minutes` have passed since the Unix time in its `token`, e.g. Agent Recency's
+  `$last_at`, or when it has no such time (a value that isn't a Unix time counts as none); a
+  working agent never does. Older agents get `rows` of their own, e.g. one line where the others
+  have three, and where they come last after at least one other agent, as in Agent Recency's
+  order, a line marks where they start: `──── earlier ────` with `divider = "earlier"`, a bare
+  line with `divider = ""`. A typo in the section is warned about and ignored, as elsewhere.
 - Notifications leave out the 🟢 ⏳ 🟠 marker that [Tab Status](https://github.com/bagonyi/herdr-tab-status)
   puts in front of a tab's name. The plugin changes it only after the notification is made, so a
   "finished" notification would still show ⏳.
@@ -215,7 +223,7 @@ Claude agent's prompt cache, which empties as its hour runs out, the last segmen
 
 ## settings
 
-Eight settings are new; all go in `~/.config/herdr/config.toml`:
+Nine settings are new; all go in `~/.config/herdr/config.toml`:
 
 ```toml
 [ui]
@@ -228,6 +236,15 @@ zen_width = 150
 [ui.sidebar.agents]
 # Hide the agents panel; the spaces list takes the whole sidebar. Default: false.
 hidden = true
+
+# Agents not active for 120 minutes, by the Unix time in their $last_at, or with none: rows
+# of their own, and a line above the first of them where they come last. Working agents never
+# count. Without rows they keep the usual ones, and without divider there's no line. Default: none.
+[ui.sidebar.agents.older]
+token = "$last_at"
+after_minutes = 120
+divider = "earlier"
+rows = [["state_icon", "workspace", "tab", { token = "$last_at", format = "ago" }]]
 
 [keys]
 # Back and forth between a space's two latest tabs, and between the two latest spaces.
