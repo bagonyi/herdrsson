@@ -338,6 +338,8 @@ uses the Herdr number.
   of 2026.10.29.2 is gone again: a config that still sets `strikethrough` is rejected.
 - 2026.10.31 (on Herdr 0.9.5): a sidebar token can take its colour from a scale, `fg_scale`,
   blended by the number it shows, such as a context's size turning from green to red.
+- 2026.10.31.2 (on Herdr 0.9.5): agents not active for a while can get rows of their own, such
+  as one line each, under a line that reads `──── earlier ────` (`[ui.sidebar.agents.older]`).
 
 ## caveats
 
