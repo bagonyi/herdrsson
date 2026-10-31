@@ -5,12 +5,16 @@
 //! `0s left` in its last 10 seconds and once it has passed. `format = "bar"` shows a value of two such times,
 //! `FROM/UNTIL`, as the share of the time between them still left: `▰▰▰▰▱▱`, and `format =
 //! "bar_left"` that bar with the time left after it: `▰▰▰▰▱▱ 38m`. The client repaints each
-//! second while a row uses any of them (`ClientShellState::tick_ago`).
+//! second while a row uses any of them (`ClientShellState::tick_ago`), or while
+//! `[ui.sidebar.agents.older]` is set, as agents turn older with time (`agent_is_older`).
 
+use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::tokens::{ResolvedToken, ResolvedTokenKind};
-use crate::config::{AgentsSidebarConfig, SidebarTokenFormat, SpacesSidebarConfig};
+use crate::config::{
+    AgentsSidebarConfig, OlderAgentsConfig, SidebarTokenFormat, SpacesSidebarConfig,
+};
 
 /// A custom token's value as its row shows it. A value its format can't read shows as it is.
 pub(super) fn custom_value(value: &str, format: Option<SidebarTokenFormat>) -> String {
@@ -96,6 +100,27 @@ fn duration(seconds: u64) -> String {
     }
 }
 
+/// Whether an agent counts as older under `[ui.sidebar.agents.older]`: it isn't working, and
+/// `after_minutes` have passed since the Unix time in its token, or it has no such time.
+pub(crate) fn agent_is_older(
+    agents: &AgentsSidebarConfig,
+    tokens: &HashMap<String, String>,
+    working: bool,
+) -> bool {
+    agents
+        .older
+        .as_ref()
+        .is_some_and(|older| !working && older_at(older, tokens, unix_now()))
+}
+
+/// A time in the future, as from another machine's clock, counts as just now.
+fn older_at(older: &OlderAgentsConfig, tokens: &HashMap<String, String>, now: u64) -> bool {
+    tokens
+        .get(older.token_name())
+        .and_then(|value| value.parse::<u64>().ok())
+        .is_none_or(|at| now.saturating_sub(at) >= older.after_minutes.saturating_mul(60))
+}
+
 /// A working agent's row shows `working` in place of its `ago` times: how long ago it started
 /// isn't what you look for while it works.
 pub(crate) fn show_working(rows: &mut [Vec<ResolvedToken>]) {
@@ -107,7 +132,8 @@ pub(crate) fn show_working(rows: &mut [Vec<ResolvedToken>]) {
 }
 
 /// Whether a new second has begun since `last_second` while a row shows a token as `ago`,
-/// `left`, `bar` or `bar_left`, so the sidebar needs a repaint. Updates `last_second`.
+/// `left`, `bar` or `bar_left`, or older agents look different (`[ui.sidebar.agents.older]`), so
+/// the sidebar needs a repaint. Updates `last_second`.
 pub(crate) fn sidebar_ago_changed(
     agents: &AgentsSidebarConfig,
     spaces: &SpacesSidebarConfig,
@@ -120,16 +146,17 @@ fn new_second(last_second: &mut u64, now: u64) -> bool {
     std::mem::replace(last_second, now) != now
 }
 
-/// Whether an agent or space row shows a token as `ago`, `left`, `bar` or `bar_left`, so the
-/// sidebar changes as time passes.
+/// Whether an agent or space row shows a token as `ago`, `left`, `bar` or `bar_left`, or
+/// older agents look different, so the sidebar changes as time passes.
 fn sidebar_uses_ago(agents: &AgentsSidebarConfig, spaces: &SpacesSidebarConfig) -> bool {
     let agent_rows = agents
         .rows
         .iter()
         .chain(agents.rows_by_agent.values().flatten());
-    agent_rows
-        .flatten()
-        .any(|token| token.parts().1.format.is_some())
+    agents.older.is_some()
+        || agent_rows
+            .flatten()
+            .any(|token| token.parts().1.format.is_some())
         || spaces
             .rows
             .iter()
@@ -162,6 +189,7 @@ mod tests {
             terminal_title_stripped: None,
             canonical_agent: None,
             tokens,
+            older: false,
         }
     }
 
@@ -531,5 +559,67 @@ rows = [[{ token = "$cache_span", format = "bar_left", rules = [{ equals = "▱�
         assert!(uses(
             "[agents]\nrows = [[{ token = \"$t\", format = \"bar_left\" }]]\n"
         ));
+        assert!(
+            uses("[agents.older]\ntoken = \"$t\"\nafter_minutes = 120\n"),
+            "agents turn older as time passes"
+        );
+    }
+
+    #[test]
+    fn an_agent_turns_older_once_the_minutes_have_passed_since_its_time_unless_it_works() {
+        let config = sidebar("[agents.older]\ntoken = \"$last_at\"\nafter_minutes = 120\n")
+            .unwrap()
+            .agents;
+        let older = config.older.as_ref().unwrap();
+        let now = 10_000_000;
+        let at = |seconds_ago: i64| {
+            HashMap::from([(
+                "last_at".to_string(),
+                (now as i64 - seconds_ago).to_string(),
+            )])
+        };
+        assert!(!older_at(older, &at(0), now));
+        assert!(
+            !older_at(older, &at(7_199), now),
+            "still `1h ago` a second before two hours"
+        );
+        assert!(older_at(older, &at(7_200), now), "`2h ago`");
+        assert!(
+            !older_at(older, &at(-60), now),
+            "a time in the future is just now"
+        );
+        assert!(older_at(older, &HashMap::new(), now), "no time at all");
+        let unreadable = HashMap::from([("last_at".to_string(), "14:32".to_string())]);
+        assert!(
+            older_at(older, &unreadable, now),
+            "a value that isn't a time"
+        );
+
+        let long_ago = HashMap::from([("last_at".to_string(), "1".to_string())]);
+        assert!(agent_is_older(&config, &long_ago, false));
+        assert!(
+            !agent_is_older(&config, &long_ago, true),
+            "a working agent never counts as older"
+        );
+        assert!(
+            !agent_is_older(&AgentsSidebarConfig::default(), &long_ago, false),
+            "nothing counts as older without [ui.sidebar.agents.older]"
+        );
+    }
+
+    #[test]
+    fn an_older_agent_gets_the_older_rows() {
+        let config = sidebar(
+            "[agents]\nrows = [[\"workspace\"], [{ token = \"$last_at\", format = \"ago\" }]]\n[agents.older]\ntoken = \"$last_at\"\nafter_minutes = 120\nrows = [[\"workspace\", { token = \"$last_at\", format = \"ago\" }]]\n",
+        )
+        .unwrap();
+        let tokens = HashMap::from([("last_at".to_string(), "1".to_string())]);
+        let mut context = agent_context(&tokens);
+        assert_eq!(agent_rows(&config.agents, context, "idle").len(), 2);
+        context = agent_context(&tokens);
+        context.older = true;
+        let rows = agent_rows(&config.agents, context, "idle");
+        assert_eq!(rows.len(), 1, "one line: {rows:?}");
+        assert_eq!(rows[0].len(), 2);
     }
 }

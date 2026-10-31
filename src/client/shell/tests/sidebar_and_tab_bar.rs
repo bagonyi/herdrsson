@@ -313,3 +313,143 @@ fn agents_header_counts_agents_by_status_in_their_colours() {
     assert_eq!(cells[14].fg, color(palette.red), "blocked stays");
     assert!(text.contains(" grouped│"), "the sort label stays whole");
 }
+
+#[test]
+fn older_agents_get_their_own_rows_under_a_line_once_they_come_last() {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after 1970")
+        .as_secs();
+    let agent =
+        |title: &str, agent_status: AgentStatus, seconds_ago: Option<u64>| ClientShellAgent {
+            pane_id: format!("pane_{title}"),
+            workspace_id: "ws_1".into(),
+            tab_id: "tab_1".into(),
+            name: None,
+            display_agent: None,
+            agent: Some("pi".into()),
+            title: Some(title.into()),
+            terminal_title: None,
+            terminal_title_stripped: None,
+            agent_status,
+            state_change_seq: 1,
+            state_labels: Vec::new(),
+            tokens: seconds_ago
+                .map(|ago| vec![("last_at".to_string(), (now - ago).to_string())])
+                .unwrap_or_default(),
+            focused: false,
+        };
+    let alpha = agent("alpha", AgentStatus::Working, Some(3 * 3_600));
+    let beta = agent("beta", AgentStatus::Idle, Some(90));
+    let gamma = agent("gamma", AgentStatus::Idle, Some(7_200));
+    let delta = agent("delta", AgentStatus::Done, None);
+    let list = |older: &str, agents: Vec<ClientShellAgent>| {
+        let mut config = Config::default();
+        config.ui.sidebar.agents = toml::from_str(&format!(
+            "rows = [[\"state_icon\", \"pane\"], [{{ token = \"$last_at\", format = \"ago\" }}]]\n{older}"
+        ))
+        .expect("agents config");
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+        state.sidebar_width = 30;
+        state.sidebar_width_manual = true;
+        let mut projected = snapshot();
+        projected.agents = agents;
+        state.set_snapshot(Box::new(projected));
+        state.set_pane_surface(surface());
+        let frame = state.compose(106, 40).expect("expanded sidebar");
+        let rows = frame_rows(&frame)
+            .into_iter()
+            .map(|row| {
+                row.chars()
+                    .take(29)
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        let header = rows
+            .iter()
+            .position(|row| row.starts_with(" agents"))
+            .expect("agents header");
+        let mut rows = rows[header + 2..].to_vec();
+        // Down to the last agent: blank lines below it, and the collapse button `«` at the bottom.
+        while rows
+            .last()
+            .is_some_and(|row| row.trim_matches([' ', '«']).is_empty())
+        {
+            rows.pop();
+        }
+        rows
+    };
+    let older = "[older]\ntoken = \"$last_at\"\nafter_minutes = 120\ndivider = \"earlier\"\nrows = [[\"state_icon\", \"pane\"]]\n";
+    let rows = list(
+        older,
+        vec![alpha.clone(), beta.clone(), gamma.clone(), delta.clone()],
+    );
+    let rule = "─".repeat(10);
+    assert_eq!(
+        rows[..4]
+            .iter()
+            .map(|row| row.trim_start_matches([' ', '●', '○']))
+            .collect::<Vec<_>>(),
+        ["alpha", "working", "beta", "1m ago"],
+        "a working agent counts as recent however long ago it started: {rows:#?}"
+    );
+    assert_eq!(rows[4], format!("{rule} earlier {rule}"), "{rows:#?}");
+    assert!(rows[5].ends_with(" gamma") && rows[6].ends_with(" delta"));
+    assert_eq!(
+        rows.len(),
+        7,
+        "older agents, with no time or two hours old, on one line each: {rows:#?}"
+    );
+
+    let rows = list(
+        older,
+        vec![gamma.clone(), alpha.clone(), delta.clone(), beta.clone()],
+    );
+    assert!(
+        rows.iter().all(|row| !row.contains('─')) && rows.len() == 6,
+        "no line where older agents don't come last: {rows:#?}"
+    );
+    let rows = list(older, vec![gamma.clone(), delta.clone()]);
+    assert!(
+        rows.iter().all(|row| !row.contains('─')),
+        "no line without a recent agent above it: {rows:#?}"
+    );
+
+    let rows = list(
+        &older.replace("divider = \"earlier\"", "divider = \"\""),
+        vec![beta.clone(), gamma.clone()],
+    );
+    assert_eq!(rows[2], "─".repeat(29), "a bare line: {rows:#?}");
+    let rows = list(
+        &older.replace("divider = \"earlier\"\n", ""),
+        vec![beta.clone(), gamma.clone()],
+    );
+    assert_eq!(rows.len(), 3, "no line without a divider: {rows:#?}");
+
+    let rows = list(&format!("row_gap = 1\n{older}"), vec![beta, gamma]);
+    assert_eq!(
+        rows[2..],
+        [
+            String::new(),
+            format!("{rule} earlier {rule}"),
+            " ○ gamma".to_string()
+        ],
+        "with a gap the line sits next to the older agents it heads: {rows:#?}"
+    );
+}
+
+#[test]
+fn the_line_above_older_agents_never_overflows_the_gap() {
+    let mut config = crate::config::AgentsSidebarConfig {
+        row_gap: u16::MAX,
+        ..Default::default()
+    };
+    config.older = Some(
+        toml::from_str("token = \"$last_at\"\nafter_minutes = 120\ndivider = \"\"")
+            .expect("older agents"),
+    );
+    let (gaps, divider_after) = super::agent_sidebar::agent_list_gaps(&[false, true], &config);
+    assert_eq!((gaps, divider_after), (vec![u16::MAX, 0], Some(0)));
+}
