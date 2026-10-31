@@ -287,7 +287,7 @@ released, and the Herdr release it's built on.
 
 ```
 $ herdr --version
-herdrsson 2026.10.30 (based on herdr 0.9.5)
+herdrsson 2026.10.31 (based on herdr 0.9.5)
 ```
 
 A second release on the same day ends in `.2`. Moving onto a new Herdr release changes only the
@@ -319,6 +319,8 @@ uses the Herdr number.
   show the time left after it, `▰▰▰▱▱▱ 28m`, and a sidebar rule can show other text in its
   token's place, such as `▱▱▱▱▱▱ expired` for an expired prompt cache. The struck-through style
   of 2026.10.29.2 is gone again: a config that still sets `strikethrough` is rejected.
+- 2026.10.31 (on Herdr 0.9.5): a sidebar token can take its colour from a scale, `fg_scale`,
+  blended by the number it shows, such as a context's size turning from green to red.
 
 ## caveats
 
