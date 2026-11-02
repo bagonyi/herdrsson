@@ -164,6 +164,10 @@ and the pill in the agents panel's title is Claude's weekly usage, from a script
   `fg_scale = [{ at = 75_000, fg = "#9ece6a" }, { at = 225_000, fg = "#e0af68" }]` turns
   Claude Cache Timer's `$cache_tokens` from green to yellow as the context grows. Below the
   first stop and above the last it keeps their colour, and a matching rule's `fg` still wins.
+- A sidebar token can set what goes before it in its row in place of ` · `: one space,
+  `separator = "space"`, or nothing, `separator = "none"`. E.g.
+  `{ token = "$cache_pings", separator = "space" }` puts Claude Cache Timer's `↻ 5` right after
+  the bar's time, `▰▰▰▱▱▱ 28m ↻ 5`.
 - Agents not active for a while can look different, to tell them at a glance from the ones you
   are working with. Under `[ui.sidebar.agents.older]`, an agent counts as older once
   `after_minutes` have passed since the Unix time in its `token`, e.g. Agent Recency's

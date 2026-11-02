@@ -105,6 +105,7 @@ impl TryFrom<RawRule> for SidebarTokenRule {
                 bold: raw.bold,
                 dim: raw.dim,
                 format: None,
+                separator: None,
             },
         })
     }
@@ -195,6 +196,7 @@ pub(super) fn matching_style(
                 bold: rule.style.bold.or(base.bold),
                 dim: rule.style.dim.or(base.dim),
                 format: base.format,
+                separator: base.separator,
             });
         }
     }
