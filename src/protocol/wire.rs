@@ -942,6 +942,11 @@ pub struct ClientShellSnapshot {
     pub tab_bar_right: Vec<ClientShellTabStatusSegment>,
     pub tab_bar_right_separator: String,
     pub agent_view_label: Option<String>,
+    /// Fork: the text of `[ui.sidebar.agents] title_command`, for the agents panel's title, with
+    /// the SGR sequences (colours, bold) it printed and no other control characters.
+    /// Optional, so a client and a server without it still understand each other.
+    #[serde(default)]
+    pub agent_panel_title: Option<String>,
     pub agent_order: Vec<String>,
     pub workspaces: Vec<ClientShellWorkspace>,
     pub tabs: Vec<ClientShellTab>,
@@ -2816,6 +2821,7 @@ mod tests {
             }],
             tab_bar_right_separator: " · ".into(),
             agent_view_label: None,
+            agent_panel_title: None,
             agent_order: Vec::new(),
             workspaces: vec![ClientShellWorkspace {
                 workspace_id: "w1".into(),

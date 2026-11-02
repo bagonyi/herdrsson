@@ -453,3 +453,126 @@ fn the_line_above_older_agents_never_overflows_the_gap() {
     let (gaps, divider_after) = super::agent_sidebar::agent_list_gaps(&[false, true], &config);
     assert_eq!((gaps, divider_after), (vec![u16::MAX, 0], Some(0)));
 }
+
+#[test]
+fn agents_header_shows_the_title_command_before_the_sort_label() {
+    let agent = |pane_id: &str, agent_status: AgentStatus| ClientShellAgent {
+        pane_id: pane_id.into(),
+        workspace_id: "ws_1".into(),
+        tab_id: "tab_1".into(),
+        name: None,
+        display_agent: None,
+        agent: Some("pi".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status,
+        state_change_seq: 1,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused: false,
+    };
+    let mut projected = snapshot();
+    projected.agents = vec![
+        agent("pane_a", AgentStatus::Working),
+        agent("pane_b", AgentStatus::Idle),
+    ];
+    projected.agent_panel_title = Some("7d 42%".into());
+    let mut config = Config::default();
+    config.ui.sidebar_max_width = 60;
+    let header = |sidebar_width: u16| {
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+        state.sidebar_width = sidebar_width;
+        state.sidebar_width_manual = true;
+        state.set_snapshot(Box::new(projected.clone()));
+        state.set_pane_surface(surface());
+        let frame = state.compose(106, 30).expect("expanded sidebar");
+        let row = frame
+            .cells
+            .chunks(frame.width as usize)
+            .find(|row| {
+                row.iter()
+                    .map(|cell| cell.symbol.as_str())
+                    .collect::<String>()
+                    .starts_with(" agents")
+            })
+            .expect("agents header")
+            .to_vec();
+        let text = row
+            .iter()
+            .take(usize::from(sidebar_width))
+            .map(|cell| cell.symbol.as_str())
+            .collect::<String>();
+        (text, row, state.config.palette.clone())
+    };
+
+    let (text, cells, palette) = header(40);
+    assert_eq!(
+        text, " agents · 2 · ● 1  ○ 1  7d 42%  grouped│",
+        "the text sits between the counts and the sort label"
+    );
+    assert_eq!(
+        cells[24].fg,
+        crate::protocol::color_to_u32(palette.overlay0)
+    );
+
+    let (text, _, _) = header(36);
+    assert_eq!(
+        text, " agents · 2 · ● 1   7d 42%  grouped│",
+        "the counts that don't fit before the text are left out, idle first"
+    );
+
+    let (text, _, _) = header(26);
+    assert_eq!(
+        text, " agents · 2 · ● 1 grouped│",
+        "text that doesn't fit after the count is left out"
+    );
+
+    projected.agent_panel_title = Some("\x1b[48;2;36;40;59m 7d 6% \x1b[0m".into());
+    let header_of = |projected: &ClientShellSnapshot, sidebar_width: u16| {
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+        state.sidebar_width = sidebar_width;
+        state.sidebar_width_manual = true;
+        state.set_snapshot(Box::new(projected.clone()));
+        state.set_pane_surface(surface());
+        let frame = state.compose(106, 30).expect("expanded sidebar");
+        frame
+            .cells
+            .chunks(frame.width as usize)
+            .find(|row| {
+                row.first().is_some_and(|cell| cell.symbol == " ")
+                    && row.get(1).is_some_and(|cell| cell.symbol == "a")
+            })
+            .expect("agents header")
+            .to_vec()
+    };
+    let cells = header_of(&projected, 41);
+    let text = cells
+        .iter()
+        .take(41)
+        .map(|cell| cell.symbol.as_str())
+        .collect::<String>();
+    assert_eq!(
+        text, " agents · 2 · ● 1  ○ 1   7d 6%   grouped│",
+        "the sequences take no room"
+    );
+    let mut lam_alef = projected.clone();
+    lam_alef.agent_panel_title = Some("\u{644}\u{627}|".into());
+    let lam_alef = header_of(&lam_alef, 41)
+        .iter()
+        .take(41)
+        .map(|cell| cell.symbol.as_str())
+        .collect::<String>();
+    assert!(
+        lam_alef.contains("\u{644}\u{627}") && lam_alef.ends_with("|  grouped│"),
+        "measured as it's drawn, so the last column stays: {lam_alef:?}"
+    );
+    let chip = crate::protocol::color_to_u32(ratatui::style::Color::Rgb(36, 40, 59));
+    assert!(
+        (24..31).all(|column| cells[column].bg == chip)
+            && cells[23].bg != chip
+            && cells[31].bg != chip,
+        "the colours the command printed: {:?}",
+        cells.iter().map(|cell| cell.bg).collect::<Vec<_>>()
+    );
+}

@@ -46,6 +46,7 @@ pub(super) fn render_expanded(
     buffer: &mut Buffer,
     area: Rect,
     agent_view_label: Option<&str>,
+    agent_panel_title: Option<&str>,
     endpoints: &[ClientShellEndpoint],
     active_endpoint_id: &ClientEndpointId,
     config: &ClientShellConfig,
@@ -57,6 +58,7 @@ pub(super) fn render_expanded(
         buffer,
         area,
         agent_view_label,
+        agent_panel_title,
         // Fork: a disconnected machine's agents count in the total, not by their stale status.
         &rows
             .iter()

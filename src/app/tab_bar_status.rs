@@ -15,6 +15,10 @@ use crate::config::TabBarRightEntryConfig;
 const DATETIME_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_COMMAND_LINE_BYTES: usize = 4096;
 const MAX_STATUS_TEXT_CHARS: usize = 80;
+/// Fork: the segment index of `[ui.sidebar.agents] title_command`, which runs alongside the tab
+/// bar's commands but shows its text in `agent_panel_title`, not in a tab bar segment, and keeps
+/// the colours it prints.
+const AGENT_PANEL_TITLE_SEGMENT: usize = usize::MAX;
 
 pub(super) struct TabBarDatetimeRuntime {
     segment_index: usize,
@@ -122,6 +126,31 @@ impl App {
             (!self.tab_bar_datetimes.is_empty()).then_some(now + DATETIME_REFRESH_INTERVAL);
     }
 
+    /// Fork: run `[ui.sidebar.agents] title_command` with the tab bar's commands, its last line
+    /// going to `agent_panel_title`. Call it right after `configure_tab_bar_status`, which stops
+    /// every command, this one too, and starts the generation it runs in. The title shown stays
+    /// until the command's next run replaces it (at once), so a config reload doesn't blank it,
+    /// unless there's no command to run any more.
+    pub(super) fn configure_agent_panel_title(
+        &mut self,
+        config: Option<&crate::config::AgentsTitleCommandConfig>,
+    ) {
+        let Some(config) = config.filter(|config| {
+            crate::platform::status_commands_supported() && config.problems().is_empty()
+        }) else {
+            self.state.agent_panel_title = None;
+            return;
+        };
+        self.tab_bar_commands.push(TabBarCommandRuntime {
+            segment_index: AGENT_PANEL_TITLE_SEGMENT,
+            command: config.command.clone(),
+            interval: Duration::from_secs(config.interval_seconds),
+            timeout: Duration::from_secs(config.timeout_seconds),
+            next_run_at: std::time::Instant::now(),
+            task: None,
+        });
+    }
+
     pub(crate) fn handle_tab_bar_status_tasks(&mut self, now: std::time::Instant) -> bool {
         let mut changed = false;
 
@@ -199,15 +228,24 @@ impl App {
 
         let output = match result {
             Ok(output) => output,
+            Err(error) if segment_index == AGENT_PANEL_TITLE_SEGMENT => {
+                tracing::warn!(command = %runtime.command, error, "agents panel title command failed");
+                None
+            }
             Err(error) => {
                 tracing::warn!(command = %runtime.command, error, "tab bar status command failed");
                 None
             }
         };
-        let Some(TabBarStatusSegment::Text(current)) =
-            self.state.tab_bar_right.get_mut(segment_index)
-        else {
-            return false;
+        let current = if segment_index == AGENT_PANEL_TITLE_SEGMENT {
+            &mut self.state.agent_panel_title
+        } else {
+            let Some(TabBarStatusSegment::Text(current)) =
+                self.state.tab_bar_right.get_mut(segment_index)
+            else {
+                return false;
+            };
+            current
         };
         let changed = *current != output;
         *current = output;
@@ -280,6 +318,51 @@ fn command_output_text(output: &[u8]) -> Option<String> {
     let output = strip_terminal_control_sequences(output.as_bytes());
     let output = String::from_utf8_lossy(&output);
     output.lines().next_back().and_then(sanitize_status_text)
+}
+
+/// Fork: like `command_output_text`, but keeps the SGR sequences (`ESC [ … m`: colours, bold)
+/// for the client to style the text with. Every other control sequence and character goes; at
+/// most `MAX_STATUS_TEXT_CHARS` characters show. Whitespace is trimmed from the ends of the line
+/// as printed, so spaces with a sequence beyond them stay, styled or not (` 7d 6% ESC[0m`), and a
+/// styled space with nothing after it goes: end such text with `ESC[0m`.
+fn styled_command_output_text(output: &[u8]) -> Option<String> {
+    let output = String::from_utf8_lossy(output);
+    let line = output.lines().next_back()?.trim();
+    let mut text = String::new();
+    let mut shown = 0;
+    let mut rest = line;
+    while !rest.is_empty() {
+        if let Some(length) = sgr_sequence_length(rest) {
+            text.push_str(&rest[..length]);
+            rest = &rest[length..];
+            continue;
+        }
+        let first = rest.chars().next().map_or(0, char::len_utf8);
+        let end = rest[first..]
+            .find('\x1b')
+            .map_or(rest.len(), |index| index + first);
+        let plain = strip_terminal_control_sequences(&rest.as_bytes()[..end]);
+        for character in String::from_utf8_lossy(&plain).chars() {
+            if character.is_control() || is_unicode_format_control(character) {
+                continue;
+            }
+            if shown == MAX_STATUS_TEXT_CHARS {
+                break;
+            }
+            text.push(character);
+            shown += 1;
+        }
+        rest = &rest[end..];
+    }
+    (shown > 0).then_some(text)
+}
+
+/// Fork: the length of the SGR sequence `text` starts with, if it starts with one.
+fn sgr_sequence_length(text: &str) -> Option<usize> {
+    let parameters = text.strip_prefix("\x1b[")?;
+    let end =
+        parameters.find(|character: char| !(character.is_ascii_digit() || character == ';'))?;
+    parameters[end..].starts_with('m').then_some(2 + end + 1)
 }
 
 #[derive(Clone, Copy)]
@@ -442,6 +525,7 @@ fn spawn_status_command(
             deadline,
             environment,
             cwd,
+            segment_index == AGENT_PANEL_TITLE_SEGMENT,
         )
         .await;
         task_control.terminate();
@@ -466,6 +550,7 @@ async fn run_status_command(
     deadline: tokio::time::Instant,
     environment: Vec<(String, String)>,
     cwd: Option<std::path::PathBuf>,
+    keep_colours: bool,
 ) -> Result<Option<String>, String> {
     if control.is_terminated() || tokio::time::Instant::now() >= deadline {
         return Err(format!("timed out after {}s", timeout.as_secs()));
@@ -504,7 +589,11 @@ async fn run_status_command(
         let status = status.map_err(|error| error.to_string())?;
         let output = output.map_err(|error| error.to_string())?;
         if status.success() {
-            Ok(command_output_text(&output))
+            Ok(if keep_colours {
+                styled_command_output_text(&output)
+            } else {
+                command_output_text(&output)
+            })
         } else {
             Err(format!("exited with {status}"))
         }
@@ -636,6 +725,106 @@ mod tests {
                 ..
             } if output == "READY"
         ));
+    }
+
+    #[test]
+    fn agent_panel_title_output_keeps_only_sgr_sequences() {
+        assert_eq!(
+            styled_command_output_text(b"old\n\x1b[48;2;36;40;59m 7d 6% \x1b[0m\r\n").as_deref(),
+            Some("\x1b[48;2;36;40;59m 7d 6% \x1b[0m"),
+            "the last line, styled spaces at its ends kept"
+        );
+        assert_eq!(
+            styled_command_output_text(
+                b"\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\ \x1b[2Jok\x07\x1b[1mbold\x1b[38:2::1:2:3m"
+            )
+            .as_deref(),
+            Some("link ok\x1b[1mbold"),
+            "links, other sequences, colon colours and control characters go"
+        );
+        assert_eq!(
+            styled_command_output_text(b"  \x1b[31m\x1b[0m  \n"),
+            None,
+            "nothing to show"
+        );
+        assert_eq!(
+            styled_command_output_text(format!("\x1b[31m{}\x1b[0m", "x".repeat(100)).as_bytes()),
+            Some(format!(
+                "\x1b[31m{}\x1b[0m",
+                "x".repeat(MAX_STATUS_TEXT_CHARS)
+            )),
+            "the sequences don't count towards the length"
+        );
+        assert_eq!(
+            styled_command_output_text("é\x1b[1mü".as_bytes()).as_deref(),
+            Some("é\x1b[1mü")
+        );
+    }
+
+    #[test]
+    fn agent_panel_title_command_shows_its_last_output_until_it_goes() {
+        let mut app = test_app();
+        let config = crate::config::AgentsTitleCommandConfig {
+            command: "usage".into(),
+            interval_seconds: 30,
+            timeout_seconds: 2,
+        };
+        app.configure_tab_bar_status(&[], " ");
+        app.configure_agent_panel_title(Some(&config));
+        assert!(
+            app.next_tab_bar_status_deadline().is_some(),
+            "the command runs with the tab bar's"
+        );
+        let generation = app.tab_bar_status_generation;
+        let finished = |app: &mut App, output: &str| {
+            app.handle_tab_bar_command_finished(
+                generation,
+                AGENT_PANEL_TITLE_SEGMENT,
+                Ok(Some(output.into())),
+            )
+        };
+
+        assert!(finished(&mut app, "7d 42%"));
+        assert_eq!(app.state.agent_panel_title.as_deref(), Some("7d 42%"));
+        assert!(app.state.tab_bar_right.is_empty(), "not a tab bar segment");
+        assert!(!finished(&mut app, "7d 42%"), "unchanged");
+
+        app.configure_tab_bar_status(&[], " ");
+        app.configure_agent_panel_title(Some(&config));
+        assert_eq!(
+            app.state.agent_panel_title.as_deref(),
+            Some("7d 42%"),
+            "a reload keeps the title until the command's next run"
+        );
+        assert!(
+            !finished(&mut app, "stale"),
+            "a run from before the reload doesn't count"
+        );
+        assert_eq!(app.state.agent_panel_title.as_deref(), Some("7d 42%"));
+
+        app.configure_tab_bar_status(&[], " ");
+        app.configure_agent_panel_title(Some(&crate::config::AgentsTitleCommandConfig {
+            interval_seconds: 0,
+            ..config.clone()
+        }));
+        assert_eq!(
+            app.state.agent_panel_title, None,
+            "a command with a problem hides it"
+        );
+        assert_eq!(app.next_tab_bar_status_deadline(), None, "and doesn't run");
+
+        app.configure_tab_bar_status(&[], " ");
+        app.configure_agent_panel_title(Some(&config));
+        let generation = app.tab_bar_status_generation;
+        assert!(app.handle_tab_bar_command_finished(
+            generation,
+            AGENT_PANEL_TITLE_SEGMENT,
+            Ok(Some("7d 43%".into())),
+        ));
+        app.configure_tab_bar_status(&[], " ");
+        app.configure_agent_panel_title(None);
+        assert_eq!(app.state.agent_panel_title, None, "cleared once removed");
+        assert_eq!(app.next_tab_bar_status_deadline(), None);
     }
 
     #[test]
