@@ -532,6 +532,70 @@ pub struct AgentsSidebarConfig {
     /// Fork: agents not active for a while, `[ui.sidebar.agents.older]`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub older: Option<OlderAgentsConfig>,
+    /// Fork: a command whose output shows in the panel's title, before the sort label.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title_command: Option<AgentsTitleCommandConfig>,
+}
+
+/// Fork: `title_command = { command = "...", interval_seconds = 30 }`. The server runs the
+/// command as it does the tab bar's command entries (`[ui] tab_bar_right`), with their defaults
+/// and limits: through the login shell every `interval_seconds` (5), given `timeout_seconds` (2)
+/// to finish, and shows the last line it prints, nothing when it prints none. As with those
+/// entries, a value out of range only hides the title, with a warning (`problems`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct AgentsTitleCommandConfig {
+    pub command: String,
+    #[serde(default = "default_title_command_interval")]
+    pub interval_seconds: u64,
+    #[serde(default = "default_title_command_timeout")]
+    pub timeout_seconds: u64,
+}
+
+fn default_title_command_interval() -> u64 {
+    super::tab_bar::DEFAULT_TAB_BAR_COMMAND_INTERVAL_SECONDS
+}
+
+fn default_title_command_timeout() -> u64 {
+    super::tab_bar::DEFAULT_TAB_BAR_COMMAND_TIMEOUT_SECONDS
+}
+
+impl AgentsTitleCommandConfig {
+    /// What keeps the command from running, in the tab bar entries' words; none when it can.
+    pub(crate) fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+        if self.command.trim().is_empty() {
+            problems.push("command is empty".to_owned());
+        }
+        for (name, seconds, max) in [
+            (
+                "interval_seconds",
+                self.interval_seconds,
+                super::MAX_TAB_BAR_COMMAND_INTERVAL_SECONDS,
+            ),
+            (
+                "timeout_seconds",
+                self.timeout_seconds,
+                super::MAX_TAB_BAR_COMMAND_TIMEOUT_SECONDS,
+            ),
+        ] {
+            if seconds == 0 {
+                problems.push(format!("{name} must be at least 1"));
+            } else if seconds > max {
+                problems.push(format!("{name} may be at most {max}"));
+            }
+        }
+        problems
+    }
+}
+
+/// Fork: warnings for `[ui.sidebar.agents] title_command`, one per problem.
+pub(crate) fn title_command_diagnostics(config: &AgentsSidebarConfig) -> Vec<String> {
+    config
+        .title_command
+        .iter()
+        .flat_map(AgentsTitleCommandConfig::problems)
+        .map(|problem| format!("ui.sidebar.agents.title_command {problem}; hiding the title"))
+        .collect()
 }
 
 /// Fork: agents not active for a while get rows of their own, and a line above the first of
@@ -615,6 +679,7 @@ impl Default for AgentsSidebarConfig {
             row_gap: DEFAULT_SIDEBAR_ROW_GAP,
             hidden: false,
             older: None,
+            title_command: None,
         }
     }
 }
@@ -950,5 +1015,49 @@ rows = [[{ token = "$status", rules = [{ contains = "error", bold = true }] }]]
                 .map(|older| older.after_minutes),
             Some(120)
         );
+    }
+
+    #[test]
+    fn the_title_command_takes_the_tab_bar_commands_defaults_and_limits() {
+        let agents = |toml: &str| {
+            toml::from_str::<crate::config::Config>(&format!(
+                "[ui.sidebar.agents]\ntitle_command = {{ {toml} }}\n"
+            ))
+            .map(|config| config.ui.sidebar.agents)
+        };
+        let config = agents("command = \"usage\"").expect("defaults");
+        assert_eq!(
+            config.title_command,
+            Some(AgentsTitleCommandConfig {
+                command: "usage".into(),
+                interval_seconds: 5,
+                timeout_seconds: 2,
+            })
+        );
+        assert!(title_command_diagnostics(&config).is_empty());
+        let config = agents("command = \"usage\", interval_seconds = 30, timeout_seconds = 3600")
+            .expect("set");
+        assert!(title_command_diagnostics(&config).is_empty());
+
+        let config = agents("command = \" \", interval_seconds = 0, timeout_seconds = 3601")
+            .expect("values out of range don't fail the config");
+        assert_eq!(
+            title_command_diagnostics(&config),
+            [
+                "ui.sidebar.agents.title_command command is empty; hiding the title",
+                "ui.sidebar.agents.title_command interval_seconds must be at least 1; hiding the title",
+                "ui.sidebar.agents.title_command timeout_seconds may be at most 3600; hiding the title",
+            ]
+        );
+        let config = agents("command = \"usage\", interval_seconds = 31536001").expect("parses");
+        assert_eq!(
+            title_command_diagnostics(&config),
+            ["ui.sidebar.agents.title_command interval_seconds may be at most 31536000; hiding the title"]
+        );
+        assert!(
+            agents("interval_seconds = 30").is_err(),
+            "a command is required, as in the tab bar's entries"
+        );
+        assert_eq!(SidebarConfig::default().agents.title_command, None);
     }
 }

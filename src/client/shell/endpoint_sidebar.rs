@@ -604,6 +604,7 @@ pub(super) fn render_expanded(
         buffer,
         detail_area,
         active_snapshot.and_then(|snapshot| snapshot.agent_view_label.as_deref()),
+        active_snapshot.and_then(|snapshot| snapshot.agent_panel_title.as_deref()),
         state.endpoints,
         state.active_endpoint_id,
         config,

@@ -38,6 +38,8 @@ mod scroll;
 mod settings;
 mod space_groups;
 mod state;
+// Fork: the agents panel title's styled text.
+mod styled_text;
 mod surface_patch;
 mod text_editor;
 mod unseen_counts;

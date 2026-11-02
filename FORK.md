@@ -125,6 +125,12 @@ Claude agent's prompt cache, which empties as its hour runs out, the last segmen
   plugin's agent view shows, then how many are blocked, done, working and idle, `· ● 2  ● 3  ○ 19`, in
   their rows' colours. A status no agent has is left out, and in a narrow sidebar so are those
   that don't fit, idle first.
+- The agents panel's title can show the last line a command prints, before the sort label:
+  `agents · 24 · ● 2  ○ 22   7d 42% · 3d  recent`, e.g. Claude's weekly usage (`title_command`,
+  see [settings](#settings)). The server runs it as it does the tab bar's command entries, but
+  keeps the colours and bold it prints (SGR sequences), so the command draws its own look, such
+  as a chip with a background; text without them is in the count's grey. In a narrow sidebar the
+  status counts make room for it; it's left out only where it doesn't fit after the agent count.
 - A custom token in an agent or space row can show a Unix time in seconds as the time since
   then, counting up as you watch: `10s ago` (in steps of 10 seconds), `5m ago`, `3h ago`,
   `2d ago`. While an agent works, its row says `working` instead. Write it as
@@ -223,7 +229,7 @@ Claude agent's prompt cache, which empties as its hour runs out, the last segmen
 
 ## settings
 
-Nine settings are new; all go in `~/.config/herdr/config.toml`:
+Ten settings are new; all go in `~/.config/herdr/config.toml`:
 
 ```toml
 [ui]
@@ -236,6 +242,10 @@ zen_width = 150
 [ui.sidebar.agents]
 # Hide the agents panel; the spaces list takes the whole sidebar. Default: false.
 hidden = true
+# A command whose last line shows in the agents panel's title, with the colours it prints, run
+# through the login shell every interval_seconds (5) and given timeout_seconds (2), as the tab
+# bar's command entries are. Default: none.
+title_command = { command = "date +%H:%M", interval_seconds = 30 }
 
 # Agents not active for 120 minutes, by the Unix time in their $last_at, or with none: rows
 # of their own, and a line above the first of them where they come last. Working agents never

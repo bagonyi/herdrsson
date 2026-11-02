@@ -544,6 +544,7 @@ impl App {
             show_agent_labels_on_pane_borders: config.ui.show_agent_labels_on_pane_borders,
             tab_bar_right: Vec::new(),
             tab_bar_right_separator: String::new(),
+            agent_panel_title: None,
             reveal_hidden_cursor_for_cjk_ime: config.experimental.reveal_hidden_cursor_for_cjk_ime,
             cjk_ime_agent_filter_configured: !config.experimental.cjk_ime_agents.is_empty(),
             cjk_ime_agents: parse_cjk_ime_agents(&config.experimental.cjk_ime_agents),
@@ -685,6 +686,7 @@ impl App {
             endpoint_commands,
         };
         app.configure_tab_bar_status(&config.ui.tab_bar_right, &config.ui.tab_bar_right_separator);
+        app.configure_agent_panel_title(config.ui.sidebar.agents.title_command.as_ref());
         app.configure_window_title(&config.ui.window_title);
         app.refresh_restored_workspace_git_metadata();
         Ok(app)
@@ -898,6 +900,9 @@ impl App {
                 diagnostics.extend(crate::config::tab_bar_right_diagnostics(
                     &config.ui.tab_bar_right,
                 ));
+                diagnostics.extend(crate::config::title_command_diagnostics(
+                    &config.ui.sidebar.agents,
+                ));
                 diagnostics.extend(crate::config::window_title_diagnostics(
                     &config.ui.window_title,
                 ));
@@ -914,6 +919,7 @@ impl App {
                     &config.ui.tab_bar_right,
                     &config.ui.tab_bar_right_separator,
                 );
+                self.configure_agent_panel_title(config.ui.sidebar.agents.title_command.as_ref());
                 self.configure_window_title(&config.ui.window_title);
                 self.state.agent_panel_sort =
                     agent_panel_sort_from_config(config.ui.agent_panel_sort);

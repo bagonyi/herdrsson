@@ -64,6 +64,7 @@ pub(super) fn render_agent_panel(
         buffer,
         area,
         snapshot.agent_view_label.as_deref(),
+        snapshot.agent_panel_title.as_deref(),
         &rows.iter().map(|row| row.status).collect::<Vec<_>>(),
         config,
         hits,
@@ -95,6 +96,7 @@ pub(super) fn render_agent_panel_header(
     buffer: &mut Buffer,
     area: Rect,
     agent_view_label: Option<&str>,
+    title: Option<&str>,
     agent_statuses: &[crate::api::schema::AgentStatus],
     config: &ClientShellConfig,
     hits: &mut ShellHitMap,
@@ -163,15 +165,54 @@ pub(super) fn render_agent_panel_header(
             })
             .add_modifier(Modifier::BOLD),
     );
+    let counts_x = area.x + 8 + display_width(&count_text) as u16 + 1;
+    let counts_right = render_agent_panel_title(
+        buffer,
+        counts_x,
+        area.y + 1,
+        sort_rect.x.saturating_sub(2),
+        title,
+        config,
+    )
+    .map_or(sort_rect.x.saturating_sub(1), |title_x| {
+        title_x.saturating_sub(2)
+    });
     render_agent_status_counts(
         buffer,
-        area.x + 8 + display_width(&count_text) as u16 + 1,
+        counts_x,
         area.y + 1,
-        sort_rect.x.saturating_sub(1),
+        counts_right,
         agent_statuses,
         config,
     );
     true
+}
+
+// Fork: `[ui.sidebar.agents] title_command`'s text ends at `right`, just before the sort label,
+// when it fits after the agent count; the status counts take the room left before it. It's in
+// the count's grey but for the colours the command printed. Returns where it starts, or none
+// when there's none or it doesn't fit.
+fn render_agent_panel_title(
+    buffer: &mut Buffer,
+    left: u16,
+    y: u16,
+    right: u16,
+    title: Option<&str>,
+    config: &ClientShellConfig,
+) -> Option<u16> {
+    let parts =
+        super::styled_text::styled_parts(title?, Style::default().fg(config.palette.overlay0));
+    let width = parts
+        .iter()
+        .map(|(text, _)| drawn_width(text))
+        .sum::<usize>();
+    let width = u16::try_from(width).ok().filter(|width| *width > 0)?;
+    let start = right.checked_sub(width).filter(|x| *x >= left)?;
+    let mut x = start;
+    for (text, style) in &parts {
+        (x, _) = buffer.set_stringn(x, y, text, usize::from(right.saturating_sub(x)), *style);
+    }
+    Some(start)
 }
 
 // Fork: how many agents are blocked, done, working and idle follows the count,
@@ -522,6 +563,15 @@ fn put_text(buffer: &mut Buffer, x: u16, y: u16, width: u16, text: &str, style: 
 
 fn display_width(text: &str) -> usize {
     unicode_width::UnicodeWidthStr::width(text)
+}
+
+/// Fork: the columns `Buffer::set_stringn` takes for `text`: its graphemes' widths, without
+/// control characters. A whole string's `display_width` can differ (Arabic lam-alef: 1 against 2).
+fn drawn_width(text: &str) -> usize {
+    unicode_segmentation::UnicodeSegmentation::graphemes(text, true)
+        .filter(|grapheme| !grapheme.contains(char::is_control))
+        .map(unicode_width::UnicodeWidthStr::width)
+        .sum()
 }
 
 fn sidebar_status_text(status: crate::api::schema::AgentStatus) -> &'static str {
