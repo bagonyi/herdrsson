@@ -375,6 +375,9 @@ uses the Herdr number.
   colours, before the sort label (`title_command`), such as Claude's weekly usage as a pill.
 - 2026.11.02.2 (on Herdr 0.9.5): the agents panel's title can leave out the sort label
   (`sort_label = false`).
+- 2026.11.02.3 (on Herdr 0.9.5): a new space made in the window goes right after the space
+  you're in, not at the end, and in a space group the box asking for its name starts with
+  `Group/`. A sidebar token can set what goes before it in its row (`separator`).
 
 ## caveats
 
