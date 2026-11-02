@@ -5,6 +5,9 @@ use crate::client::shell::space_groups::{split_name, SpaceName};
 #[path = "unseen_counts.rs"]
 mod unseen_counts;
 
+#[path = "new_space.rs"]
+mod new_space;
+
 fn space(number: usize, label: &str, custom_label: bool) -> ClientShellWorkspace {
     let mut workspace = snapshot().workspaces[0].clone();
     workspace.workspace_id = format!("ws_{number}");

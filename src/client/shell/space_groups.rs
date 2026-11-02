@@ -3,9 +3,11 @@
 //! full name and its own order. A click on a header folds the group (` ▸ ✓ Web`); a right-click
 //! opens its menu, which folds it too or renames the group (every member's name). A space's own
 //! menu moves it to a group by its name, and the window then moves it in the server's order too,
-//! so that order matches the drawing. Dragging does the same (`drag`).
+//! so that order matches the drawing. Dragging does the same (`drag`). A new space goes next to the
+//! space it was made from (`new_space`).
 
 pub(super) mod drag;
+pub(super) mod new_space;
 
 pub(super) use drag::GroupDrag;
 
@@ -1320,8 +1322,12 @@ impl ClientShellState {
     }
 
     /// Sends what a rename box saves; a space's rename brings the moves that go with it
-    /// (`rename_moves`) if it was queued: a refused rename moves nothing.
+    /// (`rename_moves`) if it was queued: a refused rename moves nothing. A new space goes next to
+    /// the space it was made from (`push_new_space`).
     pub(super) fn push_rename(&mut self, method: Method, outcome: &mut ClientShellInput) {
+        if matches!(method, Method::WorkspaceCreate(_)) {
+            return self.push_new_space(method, outcome);
+        }
         let moves = match (&method, self.snapshot.as_deref()) {
             (Method::WorkspaceRename(rename), Some(snapshot)) => {
                 rename_moves(snapshot, &rename.workspace_id, &rename.label)

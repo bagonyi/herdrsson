@@ -90,7 +90,8 @@ impl ClientShellState {
                     if self.config.prompt_new_workspace_name {
                         self.open_new_workspace_overlay();
                     } else {
-                        self.push_endpoint_method(
+                        // Fork: next to the space it is made from (`space_groups`).
+                        self.push_new_space(
                             crate::api::schema::Method::WorkspaceCreate(
                                 crate::api::schema::WorkspaceCreateParams {
                                     source_workspace_id: self.workspace_action_id(),
@@ -849,6 +850,12 @@ impl ClientShellState {
             kind @ (PendingEndpointKind::IntegrationList
             | PendingEndpointKind::IntegrationInstall) => {
                 return self.handle_settings_endpoint_result(kind, result);
+            }
+            // Fork: a new space moves next to the space it was made from (`space_groups`).
+            PendingEndpointKind::NewSpace { before } => {
+                let mut outcome = ClientShellInput::default();
+                let repaint = self.place_new_space(before, result, &mut outcome);
+                return (repaint || outcome.repaint, outcome.actions);
             }
             kind => {
                 let mut outcome = ClientShellInput::default();

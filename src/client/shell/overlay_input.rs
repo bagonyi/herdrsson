@@ -347,7 +347,8 @@ impl ClientShellState {
             .unwrap_or_else(|| "workspace".to_owned());
         self.overlay = Some(ClientShellOverlay::Rename(ClientRenameOverlay {
             title: "new workspace",
-            input: TextEditor::new(&suggested_name, true),
+            // Fork: `<group>/` in a space group (`space_groups`).
+            input: self.new_space_input(source_workspace_id.as_deref(), &suggested_name),
             target: ClientRenameTarget::NewWorkspace {
                 source_workspace_id,
                 cwd,
@@ -946,8 +947,11 @@ impl ClientShellState {
                     source_workspace_id,
                     cwd,
                     focus: true,
-                    label: (!trimmed.is_empty() && trimmed != suggested_name)
-                        .then(|| trimmed.to_owned()),
+                    // Fork: a bare `<group>/` names it `<group>/<folder>` (`space_groups`).
+                    label: super::space_groups::new_space::new_space_label(
+                        trimmed,
+                        &suggested_name,
+                    ),
                     env: Default::default(),
                 },
             )),

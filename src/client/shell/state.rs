@@ -667,6 +667,11 @@ pub(super) enum PendingEndpointKind {
     ReloadConfig,
     IntegrationList,
     IntegrationInstall,
+    /// Fork: a new space's `workspace.create`, whose answer moves the space before `before`
+    /// (`space_groups::new_space`).
+    NewSpace {
+        before: String,
+    },
     PrepareWorktreeCreate {
         workspace_id: String,
     },
@@ -928,6 +933,9 @@ pub(crate) struct ClientShellState {
     pub(super) tab_scroll: usize,
     pub(super) mobile_switcher_scroll: usize,
     pub(super) reveal_focused_workspace: bool,
+    /// Fork: a new space moved up the list and the space it went before, revealed once a snapshot
+    /// shows it there (`space_groups::new_space`).
+    pub(super) placed_new_space: Option<(String, String)>,
     pub(super) reveal_mobile_workspace: bool,
     pub(super) mobile_switcher_suspended: bool,
     pub(super) reveal_focused_tab: bool,
@@ -1108,6 +1116,7 @@ impl ClientShellState {
             tab_scroll: 0,
             mobile_switcher_scroll: 0,
             reveal_focused_workspace: true,
+            placed_new_space: None,
             reveal_mobile_workspace: false,
             mobile_switcher_suspended: false,
             reveal_focused_tab: true,
@@ -1493,6 +1502,8 @@ impl ClientShellState {
         {
             self.reveal_focused_workspace = true;
         }
+        // Fork: a new space is revealed where its move puts it (`space_groups`).
+        self.reveal_placed_new_space(&snapshot);
         if tab_layout_changed
             || self
                 .snapshot

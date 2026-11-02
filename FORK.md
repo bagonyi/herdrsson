@@ -61,14 +61,21 @@ and the pill in the agents panel's title is Claude's weekly usage, from a script
   own takes its folder name, as `Web/<folder>`) and moves it after the group's last space. "No
   group" takes the group out of its name and puts it right after the group. Typing a group's
   name in the rename box does the same.
+- A new space made in the window (the new space key or button) goes right after the space you're
+  in (in Navigate mode, the one selected), not at the end of the list, with or without groups.
+  Named into another group, it goes after that group's last space. Out of your space's group
+  (a top-level or new group's name, or no name of its own, as without the box), it goes right
+  after that group. The sidebar scrolls to it there. With Herdr's
+  `[ui] prompt_new_workspace_name = true`, the box asking for its name starts with `Group/` when
+  you're in a group: type the name, or press Enter for `Group/<folder>`.
 - Dragging a space onto a header adds it at the end of that group; between a group's spaces adds
   it there; between top-level rows takes it out of its group. Dragging a header moves the whole
   group. With one-line rows, a space from elsewhere can't be dropped straight into a group's
   first place, or between two folded groups; rename it or use "Move to group" instead.
 - Whenever the window puts a space into a group or moves it, it moves it in Herdr's space order
   too, so that order matches the sidebar for the Goto picker, notifications and scripts. A rename
-  from the CLI or API, or a new space created with a group in its name, isn't moved; the sidebar
-  still draws it in its group.
+  from the CLI or API, or a space created there with a group in its name, isn't moved; the
+  sidebar still draws it in its group.
 - Previous and next space, the number keys and Navigate mode go through every space in the
   sidebar's order, folded groups included, and never stop on a header. The collapsed sidebar
   numbers spaces in the same order, so its numbers match the number keys.
