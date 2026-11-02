@@ -576,3 +576,75 @@ fn agents_header_shows_the_title_command_before_the_sort_label() {
         cells.iter().map(|cell| cell.bg).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn agents_header_can_leave_the_sort_label_out() {
+    let agent = |pane_id: &str, agent_status: AgentStatus| ClientShellAgent {
+        pane_id: pane_id.into(),
+        workspace_id: "ws_1".into(),
+        tab_id: "tab_1".into(),
+        name: None,
+        display_agent: None,
+        agent: Some("pi".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status,
+        state_change_seq: 1,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused: false,
+    };
+    let mut projected = snapshot();
+    projected.agents = vec![
+        agent("pane_a", AgentStatus::Working),
+        agent("pane_b", AgentStatus::Idle),
+    ];
+    projected.agent_panel_title = Some("7d 42%".into());
+    let mut config = Config::default();
+    config.ui.sidebar_max_width = 60;
+    config.ui.sidebar.agents.sort_label = false;
+    let header = |projected: &ClientShellSnapshot| {
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+        state.sidebar_width = 40;
+        state.sidebar_width_manual = true;
+        state.set_snapshot(Box::new(projected.clone()));
+        state.set_pane_surface(surface());
+        let frame = state.compose(106, 30).expect("expanded sidebar");
+        let text = frame
+            .cells
+            .chunks(frame.width as usize)
+            .map(|row| {
+                row.iter()
+                    .take(40)
+                    .map(|cell| cell.symbol.as_str())
+                    .collect::<String>()
+            })
+            .find(|row| row.starts_with(" agents"))
+            .expect("agents header");
+        (text, state.hits.agent_sort_toggle)
+    };
+
+    let (text, toggle) = header(&projected);
+    assert_eq!(
+        text, " agents · 2 · ● 1  ○ 1          7d 42% │",
+        "no `grouped`, and the text ends a column from the edge"
+    );
+    assert_eq!(
+        toggle,
+        Rect::default(),
+        "nothing to click to switch the order"
+    );
+
+    projected.agent_view_label = Some("recent".into());
+    projected.agent_order = vec!["pane_a".into(), "pane_b".into()];
+    let (text, _) = header(&projected);
+    assert_eq!(
+        text, " agents · 2 · ● 1  ○ 1          7d 42% │",
+        "an agent view's label is left out too"
+    );
+
+    projected.agent_panel_title = None;
+    let (text, _) = header(&projected);
+    assert_eq!(text, " agents · 2 · ● 1  ○ 1                 │");
+}

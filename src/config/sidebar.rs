@@ -535,6 +535,9 @@ pub struct AgentsSidebarConfig {
     /// Fork: a command whose output shows in the panel's title, before the sort label.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title_command: Option<AgentsTitleCommandConfig>,
+    /// Fork: `false` leaves the sort label (`grouped`, `priority` or an agent view's label) out of
+    /// the panel's title, and with it the click that switches the order.
+    pub sort_label: bool,
 }
 
 /// Fork: `title_command = { command = "...", interval_seconds = 30 }`. The server runs the
@@ -680,6 +683,7 @@ impl Default for AgentsSidebarConfig {
             hidden: false,
             older: None,
             title_command: None,
+            sort_label: true,
         }
     }
 }
@@ -1015,6 +1019,19 @@ rows = [[{ token = "$status", rules = [{ contains = "error", bold = true }] }]]
                 .map(|older| older.after_minutes),
             Some(120)
         );
+    }
+
+    #[test]
+    fn the_sort_label_shows_unless_turned_off() {
+        let agents = |toml: &str| {
+            toml::from_str::<crate::config::Config>(&format!("[ui.sidebar.agents]\n{toml}\n"))
+                .expect("agents config")
+                .ui
+                .sidebar
+                .agents
+        };
+        assert!(agents("row_gap = 0").sort_label);
+        assert!(!agents("sort_label = false").sort_label);
     }
 
     #[test]
