@@ -358,6 +358,8 @@ uses the Herdr number.
   as one line each, under a line that reads `──── earlier ────` (`[ui.sidebar.agents.older]`).
 - 2026.11.02 (on Herdr 0.9.5): the agents panel's title can show a command's output, with its
   colours, before the sort label (`title_command`), such as Claude's weekly usage as a pill.
+- 2026.11.02.2 (on Herdr 0.9.5): the agents panel's title can leave out the sort label
+  (`sort_label = false`).
 
 ## caveats
 
