@@ -618,6 +618,7 @@ fn mobile_items(
     let agent_view_label = snapshot.agent_view_label.as_deref();
     if !config.agents.hidden && (!agents.is_empty() || agent_view_label.is_some()) {
         let title = agent_view_label
+            .filter(|_| config.agents.sort_label)
             .map(|label| format!("agents · {label}"))
             .unwrap_or_else(|| "agents".to_owned());
         items.push(MobileItem::section(title, palette));

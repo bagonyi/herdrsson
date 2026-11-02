@@ -131,6 +131,9 @@ Claude agent's prompt cache, which empties as its hour runs out, the last segmen
   keeps the colours and bold it prints (SGR sequences), so the command draws its own look, such
   as a chip with a background; text without them is in the count's grey. In a narrow sidebar the
   status counts make room for it; it's left out only where it doesn't fit after the agent count.
+- The agents panel's title can leave out the sort label (`grouped`, `priority` or a plugin's
+  agent view's, such as `recent`), and with it the click that switches the order
+  (`sort_label = false`); a title command's text then ends a column from the edge.
 - A custom token in an agent or space row can show a Unix time in seconds as the time since
   then, counting up as you watch: `10s ago` (in steps of 10 seconds), `5m ago`, `3h ago`,
   `2d ago`. While an agent works, its row says `working` instead. Write it as
@@ -246,6 +249,9 @@ hidden = true
 # through the login shell every interval_seconds (5) and given timeout_seconds (2), as the tab
 # bar's command entries are. Default: none.
 title_command = { command = "date +%H:%M", interval_seconds = 30 }
+# Leave the sort label (grouped, priority or an agent view's label) out of the agents panel's
+# title, and with it the click that switches the order. Default: true.
+sort_label = false
 
 # Agents not active for 120 minutes, by the Unix time in their $last_at, or with none: rows
 # of their own, and a line above the first of them where they come last. Working agents never

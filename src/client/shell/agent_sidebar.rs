@@ -135,48 +135,59 @@ pub(super) fn render_agent_panel_header(
         &count_text,
         Style::default().fg(config.palette.overlay0),
     );
-    let sort_label = agent_view_label.unwrap_or(match config.agent_panel_sort {
-        crate::config::AgentPanelSortConfig::Spaces => "grouped",
-        crate::config::AgentPanelSortConfig::Priority => "priority",
+    // Fork: `sort_label = false` leaves the label out, and the title ends a column from the edge.
+    let sort_label = config.agents.sort_label.then(|| {
+        agent_view_label.unwrap_or(match config.agent_panel_sort {
+            crate::config::AgentPanelSortConfig::Spaces => "grouped",
+            crate::config::AgentPanelSortConfig::Priority => "priority",
+        })
     });
-    let sort_width = display_width(sort_label).min(area.width as usize) as u16;
+    let sort_width = sort_label.map_or(0, |label| {
+        display_width(label).min(area.width as usize) as u16
+    });
     let sort_rect = Rect::new(
         area.right().saturating_sub(sort_width),
         area.y + 1,
         sort_width,
         1,
     );
-    hits.agent_sort_toggle = if config.mouse_capture && agent_view_label.is_none() {
-        sort_rect
-    } else {
-        Rect::default()
-    };
-    put_text(
-        buffer,
-        sort_rect.x,
-        sort_rect.y,
-        sort_rect.width,
-        sort_label,
-        Style::default()
-            .fg(if agent_view_label.is_some() {
-                config.palette.accent
-            } else {
-                config.palette.overlay0
-            })
-            .add_modifier(Modifier::BOLD),
-    );
+    hits.agent_sort_toggle =
+        if config.mouse_capture && agent_view_label.is_none() && sort_label.is_some() {
+            sort_rect
+        } else {
+            Rect::default()
+        };
+    if let Some(sort_label) = sort_label {
+        put_text(
+            buffer,
+            sort_rect.x,
+            sort_rect.y,
+            sort_rect.width,
+            sort_label,
+            Style::default()
+                .fg(if agent_view_label.is_some() {
+                    config.palette.accent
+                } else {
+                    config.palette.overlay0
+                })
+                .add_modifier(Modifier::BOLD),
+        );
+    }
+    let end = sort_rect.x.saturating_sub(1);
     let counts_x = area.x + 8 + display_width(&count_text) as u16 + 1;
     let counts_right = render_agent_panel_title(
         buffer,
         counts_x,
         area.y + 1,
-        sort_rect.x.saturating_sub(2),
+        if sort_label.is_some() {
+            end.saturating_sub(1)
+        } else {
+            end
+        },
         title,
         config,
     )
-    .map_or(sort_rect.x.saturating_sub(1), |title_x| {
-        title_x.saturating_sub(2)
-    });
+    .map_or(end, |title_x| title_x.saturating_sub(2));
     render_agent_status_counts(
         buffer,
         counts_x,
