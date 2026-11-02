@@ -107,6 +107,29 @@ pub struct SidebarTokenStyle {
     /// Fork: how a custom token's value is shown (`format = "ago"`, `"left"`, `"bar"` or
     /// `"bar_left"`). Rules can't change it.
     pub format: Option<SidebarTokenFormat>,
+    /// Fork: what goes between the token before and this one in place of Herdr's own
+    /// separator (`separator = "space"` or `"none"`). Rules can't change it.
+    pub separator: Option<SidebarTokenSeparator>,
+}
+
+/// Fork: what goes before a sidebar token in its row, in place of Herdr's ` · `.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SidebarTokenSeparator {
+    /// One space, e.g. `▰▰▰▱▱▱ 28m ↻ 5`.
+    Space,
+    /// Nothing: the token follows the one before directly.
+    #[serde(rename = "none")]
+    Nothing,
+}
+
+impl SidebarTokenSeparator {
+    pub(crate) fn text(self) -> &'static str {
+        match self {
+            Self::Space => " ",
+            Self::Nothing => "",
+        }
+    }
 }
 
 /// Fork: `ago` shows a custom token holding a Unix time in seconds as the time since then,
@@ -247,6 +270,8 @@ struct RawStyledSidebarToken {
     format: Option<SidebarTokenFormat>,
     #[serde(default)]
     fg_scale: Vec<SidebarColorStop>,
+    #[serde(default)]
+    separator: Option<SidebarTokenSeparator>,
 }
 
 /// A token's name, style, rules and colour scale, as written in the config.
@@ -293,6 +318,7 @@ impl RawSidebarToken {
                         bold: token.bold,
                         dim: token.dim,
                         format: token.format,
+                        separator: token.separator,
                     }),
                     token.rules,
                     token.fg_scale,
@@ -355,6 +381,9 @@ where
     }
     if !fg_scale.is_empty() {
         map.serialize_entry("fg_scale", fg_scale)?;
+    }
+    if let Some(separator) = style.separator {
+        map.serialize_entry("separator", &separator)?;
     }
     map.end()
 }

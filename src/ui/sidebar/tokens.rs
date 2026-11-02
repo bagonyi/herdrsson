@@ -204,6 +204,10 @@ pub(crate) fn space_rows(
 }
 
 pub(crate) fn separator(previous: &ResolvedToken, current: &ResolvedToken) -> &'static str {
+    // Fork: a token's own `separator` comes first.
+    if let Some(separator) = current.style.separator {
+        return separator.text();
+    }
     if matches!(previous.kind, ResolvedTokenKind::StateIcon)
         || matches!(current.kind, ResolvedTokenKind::GitStatus { .. })
     {
@@ -420,6 +424,45 @@ rows = [[{ token = "$size", fg_scale = [{ at = 0, fg = "#000000" }, { at = 1_000
         let round_trip: AgentsSidebarConfig =
             toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
         assert_eq!(round_trip, config);
+    }
+
+    #[test]
+    fn a_token_can_set_the_separator_before_it_and_rules_keep_it() {
+        let config: AgentsSidebarConfig = toml::from_str(
+            r##"rows = [[
+  "state_icon",
+  { token = "$time", separator = "none" },
+  "$size",
+  { token = "$pings", separator = "space", rules = [{ equals = "↻ 1", fg = "#ff9e64" }] },
+  { token = "$unit", separator = "none" },
+]]"##,
+        )
+        .unwrap();
+        let mut entry = entry();
+        for (name, value) in [
+            ("time", "38m"),
+            ("size", "70.0k"),
+            ("pings", "↻ 1"),
+            ("unit", "x"),
+        ] {
+            entry.tokens.insert(name.into(), value.into());
+        }
+        let rows = agent_rows(&config, context(&entry), "working");
+        let separators = rows[0]
+            .windows(2)
+            .map(|pair| separator(&pair[0], &pair[1]))
+            .collect::<Vec<_>>();
+        assert_eq!(separators, ["", " · ", " ", ""]);
+        assert!(rows[0][3].style.fg.is_some(), "the rule still applies");
+
+        let round_trip: AgentsSidebarConfig =
+            toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(round_trip, config);
+        // Only "space" and "none".
+        assert!(toml::from_str::<AgentsSidebarConfig>(
+            r##"rows = [[{ token = "$pings", separator = " | " }]]"##,
+        )
+        .is_err());
     }
 
     #[test]
