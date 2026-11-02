@@ -25,7 +25,7 @@ Only the window knows about groups. The server, the API and the saved session ke
 and their own order, so nothing else changes: stock Herdr just shows `Web/blog` as the
 space's name. If Herdr ever gets groups of its own, this fork will drop these and use them.
 
-![Herdrsson with its spaces in the groups Acme, Blog and a folded Oss, red counts of waiting agents, Claude's weekly usage in the agents panel's title, and the agents panel listed by last activity, each agent on three lines with the time since then, its context's size and a bar of its prompt cache's time left, the two idle for hours on one line each under an earlier line, next to a real Claude whose status line shows the same size and time left as its row](assets/fork-screenshot.png)
+![Herdrsson with its spaces in the groups Acme, Blog and a folded Oss, red counts of waiting agents, the agents counted by status and Claude's weekly usage in the agents panel's title, and the agents panel listed by last activity, each agent on three lines with the time since then, its context's size and a bar of its prompt cache's time left, the two idle for hours on one line each under an earlier line, next to a real Claude whose status line shows the same size and time left as its row](assets/fork-screenshot.png)
 
 The groups `Acme` and `Blog` are open and `Oss` is folded, its header counting the agent waiting
 in one of its spaces. Three separate Herdr plugins add the rest:
