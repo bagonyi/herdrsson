@@ -350,6 +350,8 @@ uses the Herdr number.
   blended by the number it shows, such as a context's size turning from green to red.
 - 2026.10.31.2 (on Herdr 0.9.5): agents not active for a while can get rows of their own, such
   as one line each, under a line that reads `──── earlier ────` (`[ui.sidebar.agents.older]`).
+- 2026.11.02 (on Herdr 0.9.5): the agents panel's title can show a command's output, with its
+  colours, before the sort label (`title_command`), such as Claude's weekly usage as a pill.
 
 ## caveats
 
