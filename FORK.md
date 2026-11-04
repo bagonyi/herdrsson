@@ -390,6 +390,9 @@ uses the Herdr number.
 - 2026.11.02.3 (on Herdr 0.9.5): a new space made in the window goes right after the space
   you're in, not at the end, and in a space group the box asking for its name starts with
   `Group/`. A sidebar token can set what goes before it in its row (`separator`).
+- 2026.11.04 (on Herdr 0.9.5): a click on the agents panel's title can open a command in a popup
+  under it, such as Claude's usage in detail. Go to opens on its search box, and Esc closes it at
+  once.
 
 ## caveats
 
