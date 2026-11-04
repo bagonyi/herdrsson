@@ -91,6 +91,8 @@ pub enum AppEvent {
     },
     /// The current Codex input screen is visible during managed startup.
     CodexPromptObserved { pane_id: PaneId, ready: bool },
+    /// Fork: the number of background shells a Claude agent's footer shows changed.
+    BackgroundShellsObserved { pane_id: PaneId, count: u32 },
     /// Fallback detector state changed in a pane.
     StateChanged {
         pane_id: PaneId,

@@ -1091,6 +1091,9 @@ pub struct AdvancedConfig {
     /// Maximum scrollback buffer size in bytes retained per pane terminal. Default: 10000000.
     #[serde(alias = "scrollback_lines")]
     pub scrollback_limit_bytes: usize,
+    /// Fork: count an idle Claude agent as working while its footer shows a background shell
+    /// still running (`· 1 shell`). Default: false, as in stock Herdr.
+    pub claude_background_shells_working: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1370,6 +1373,7 @@ impl Default for AdvancedConfig {
     fn default() -> Self {
         Self {
             scrollback_limit_bytes: DEFAULT_SCROLLBACK_LIMIT_BYTES,
+            claude_background_shells_working: false,
         }
     }
 }

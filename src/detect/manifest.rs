@@ -366,10 +366,12 @@ pub fn detect(agent: Agent, screen_content: &str) -> AgentDetection {
 }
 
 pub fn detect_with_osc(agent: Agent, input: DetectionInput<'_>) -> AgentDetection {
-    let Some(loaded) = load_manifest(agent) else {
-        return fallback_explain(Some(agent), None, false).into_detection();
+    let explain = match load_manifest(agent) {
+        Some(loaded) => evaluate_loaded_manifest(agent, input, loaded, false),
+        None => fallback_explain(Some(agent), None, false),
     };
-    evaluate_loaded_manifest(agent, input, loaded, false).into_detection()
+    // Fork: see background_shells.rs.
+    background_shells::count_as_working(agent, input, explain).into_detection()
 }
 
 pub fn explain(agent: Agent, screen_content: &str) -> DetectionExplain {
@@ -384,10 +386,12 @@ pub fn explain(agent: Agent, screen_content: &str) -> DetectionExplain {
 }
 
 pub fn explain_with_input(agent: Agent, input: DetectionInput<'_>) -> DetectionExplain {
-    let Some(loaded) = load_manifest(agent) else {
-        return fallback_explain(Some(agent), None, true);
+    let explain = match load_manifest(agent) {
+        Some(loaded) => evaluate_loaded_manifest(agent, input, loaded, true),
+        None => fallback_explain(Some(agent), None, true),
     };
-    evaluate_loaded_manifest(agent, input, loaded, true)
+    // Fork: see background_shells.rs.
+    background_shells::count_as_working(agent, input, explain)
 }
 
 pub fn explain_for_label(agent_label: &str, screen_content: &str) -> DetectionExplain {
@@ -1531,6 +1535,9 @@ fn line_start_offset(content: &str, lines: &[&str], index: usize) -> usize {
         .sum::<usize>()
         .min(content.len())
 }
+
+// Fork: a Claude agent's background shells.
+pub mod background_shells;
 
 #[cfg(test)]
 mod tests;

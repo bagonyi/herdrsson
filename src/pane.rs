@@ -333,6 +333,33 @@ async fn publish_codex_prompt_observation(
     }
 }
 
+/// Fork: tells the app when a Claude agent's footer shows a different number of background shells,
+/// for its `$shells` token (see detect/manifest/background_shells.rs).
+async fn publish_background_shells(
+    state_events: &mpsc::Sender<AppEvent>,
+    pane_id: PaneId,
+    agent: Option<Agent>,
+    content: &str,
+    process_exited: bool,
+    last_count: &mut Option<u32>,
+) {
+    let count = if process_exited {
+        0
+    } else {
+        crate::detect::manifest::background_shells::background_shells(agent, content)
+    };
+    if *last_count == Some(count) {
+        return;
+    }
+    *last_count = Some(count);
+    if let Err(err) = state_events
+        .send(AppEvent::BackgroundShellsObserved { pane_id, count })
+        .await
+    {
+        warn!(pane = pane_id.raw(), %err, "failed to deliver background shell count");
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct AgentDetectionPublishUpdate {
     state: AgentState,
@@ -965,6 +992,7 @@ fn spawn_basic_detection_task(
         let mut agent_startup_grace_until = None;
         let mut pending_idle = PendingIdleConfirmation::default();
         let mut last_codex_prompt_ready = false;
+        let mut last_background_shells = None; // Fork
         let mut last_self_reported_shell_check = None;
         let mut agent_job = AgentJobTracker::default();
 
@@ -1193,6 +1221,15 @@ fn spawn_basic_detection_task(
                 screen_detection.as_ref(),
                 process_exited,
                 &mut last_codex_prompt_ready,
+            )
+            .await;
+            publish_background_shells(
+                &state_events,
+                pane_id,
+                agent,
+                content,
+                process_exited,
+                &mut last_background_shells,
             )
             .await;
             let Some(screen_detection) = screen_detection else {
@@ -2890,6 +2927,7 @@ impl PaneRuntime {
                 let mut agent_startup_grace_until = None;
                 let mut pending_idle = PendingIdleConfirmation::default();
                 let mut last_codex_prompt_ready = false;
+                let mut last_background_shells = None; // Fork
                 let mut last_self_reported_shell_check = None;
                 let mut agent_job = AgentJobTracker::default();
 
@@ -3201,6 +3239,15 @@ impl PaneRuntime {
                         screen_detection.as_ref(),
                         process_exited,
                         &mut last_codex_prompt_ready,
+                    )
+                    .await;
+                    publish_background_shells(
+                        &state_events,
+                        pane_id,
+                        agent,
+                        content,
+                        process_exited,
+                        &mut last_background_shells,
                     )
                     .await;
                     let Some(screen_detection) = screen_detection else {
