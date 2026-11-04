@@ -581,6 +581,114 @@ pub struct AgentsTitleCommandConfig {
     pub interval_seconds: u64,
     #[serde(default = "default_title_command_timeout")]
     pub timeout_seconds: u64,
+    /// Fork: what a click on the title opens in a popup pane.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub popup: Option<AgentsTitlePopupConfig>,
+}
+
+/// Fork: `popup = { command = "...", title = "...", width = 60, height = "50%" }` in
+/// `title_command`. A click on the title runs `command` in a popup pane, as a `[[keys.command]]`
+/// entry with `type = "popup"` does, sized like one (cells or a percentage, half the screen by
+/// default), with `title` in its frame (`popup` without one). The popup hangs from the title in
+/// the window whose click opened it, and closes when the command exits. Unlike a
+/// `[[keys.command]]` entry, a mistake in it costs only the popup, with a warning, not the whole
+/// config: it's kept in `invalid`, and keys it doesn't know in `unknown_keys`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AgentsTitlePopupConfig {
+    pub command: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width: Option<crate::popup_size::PopupSize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height: Option<crate::popup_size::PopupSize>,
+    #[serde(skip)]
+    pub invalid: Option<String>,
+    #[serde(skip)]
+    pub unknown_keys: Vec<String>,
+}
+
+/// `popup` as written, which `AgentsTitlePopupConfig` parses through.
+#[derive(Deserialize)]
+struct WrittenTitlePopup {
+    command: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    width: Option<crate::popup_size::PopupSize>,
+    #[serde(default)]
+    height: Option<crate::popup_size::PopupSize>,
+}
+
+impl<'de> Deserialize<'de> for AgentsTitlePopupConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = toml::Value::deserialize(deserializer)?;
+        let invalid = |problem: String| Self {
+            command: String::new(),
+            title: None,
+            width: None,
+            height: None,
+            invalid: Some(problem),
+            unknown_keys: Vec::new(),
+        };
+        if !value.is_table() {
+            return Ok(invalid(
+                "must be a table such as { command = \"...\" }".to_owned(),
+            ));
+        }
+        // The whole config's unknown-key check can't see into a value read whole, so this
+        // collects them itself.
+        let mut unknown_keys = Vec::new();
+        match serde_ignored::deserialize(value, |path| unknown_keys.push(path.to_string())) {
+            Ok(WrittenTitlePopup {
+                command,
+                title,
+                width,
+                height,
+            }) => Ok(Self {
+                command,
+                title,
+                width,
+                height,
+                invalid: None,
+                unknown_keys,
+            }),
+            // One line: toml puts the field's name on a line of its own.
+            Err(error) => Ok(invalid(error.to_string().replace('\n', " "))),
+        }
+    }
+}
+
+impl AgentsTitlePopupConfig {
+    /// The popup to open on a click, none when it has a mistake or its command is empty.
+    pub(crate) fn usable(&self) -> Option<&Self> {
+        (self.invalid.is_none() && !self.command.trim().is_empty()).then_some(self)
+    }
+
+    /// Warnings for it: what keeps it from opening, and keys it ignores.
+    fn problems(&self) -> Vec<String> {
+        const KEY: &str = "ui.sidebar.agents.title_command.popup";
+        let mut problems: Vec<String> = self
+            .unknown_keys
+            .iter()
+            .map(|key| format!("unknown config key {KEY}.{key}; ignoring key"))
+            .collect();
+        let problem = match &self.invalid {
+            Some(invalid) => Some(invalid.trim().to_owned()),
+            None => self
+                .command
+                .trim()
+                .is_empty()
+                .then(|| "command is empty".to_owned()),
+        };
+        problems.extend(
+            problem.map(|problem| format!("{KEY} {problem}; a click on the title opens nothing")),
+        );
+        problems
+    }
 }
 
 fn default_title_command_interval() -> u64 {
@@ -622,11 +730,17 @@ impl AgentsTitleCommandConfig {
 
 /// Fork: warnings for `[ui.sidebar.agents] title_command`, one per problem.
 pub(crate) fn title_command_diagnostics(config: &AgentsSidebarConfig) -> Vec<String> {
-    config
-        .title_command
-        .iter()
+    let title = config.title_command.as_ref();
+    title
+        .into_iter()
         .flat_map(AgentsTitleCommandConfig::problems)
         .map(|problem| format!("ui.sidebar.agents.title_command {problem}; hiding the title"))
+        .chain(
+            title
+                .and_then(|title| title.popup.as_ref())
+                .into_iter()
+                .flat_map(AgentsTitlePopupConfig::problems),
+        )
         .collect()
 }
 
@@ -1078,6 +1192,7 @@ rows = [[{ token = "$status", rules = [{ contains = "error", bold = true }] }]]
                 command: "usage".into(),
                 interval_seconds: 5,
                 timeout_seconds: 2,
+                popup: None,
             })
         );
         assert!(title_command_diagnostics(&config).is_empty());
@@ -1105,5 +1220,116 @@ rows = [[{ token = "$status", rules = [{ contains = "error", bold = true }] }]]
             "a command is required, as in the tab bar's entries"
         );
         assert_eq!(SidebarConfig::default().agents.title_command, None);
+    }
+
+    #[test]
+    fn the_title_command_popup_takes_a_popup_commands_size() {
+        let agents = |toml: &str| {
+            toml::from_str::<crate::config::Config>(&format!(
+                "[ui.sidebar.agents]\ntitle_command = {{ command = \"usage\", {toml} }}\n"
+            ))
+            .map(|config| config.ui.sidebar.agents)
+        };
+        let config =
+            agents("popup = { command = \"usage --details\", title = \"Usage\", width = 60, height = \"40%\" }")
+                .expect("popup");
+        let popup = config
+            .title_command
+            .as_ref()
+            .and_then(|title| title.popup.clone());
+        assert_eq!(
+            popup,
+            Some(AgentsTitlePopupConfig {
+                command: "usage --details".into(),
+                title: Some("Usage".into()),
+                width: Some(crate::popup_size::PopupSize::Cells(60)),
+                height: Some(crate::popup_size::PopupSize::Percent(40)),
+                invalid: None,
+                unknown_keys: Vec::new(),
+            })
+        );
+        assert!(popup
+            .as_ref()
+            .and_then(AgentsTitlePopupConfig::usable)
+            .is_some());
+        assert!(title_command_diagnostics(&config).is_empty());
+
+        let config = agents("popup = { command = \"usage --details\" }").expect("default size");
+        let popup = config
+            .title_command
+            .and_then(|title| title.popup)
+            .expect("popup");
+        assert_eq!((popup.title, popup.width, popup.height), (None, None, None));
+
+        let config = agents("popup = { command = \" \" }").expect("an empty command parses");
+        assert!(config
+            .title_command
+            .as_ref()
+            .and_then(|title| title.popup.as_ref())
+            .and_then(AgentsTitlePopupConfig::usable)
+            .is_none());
+        assert_eq!(
+            title_command_diagnostics(&config),
+            ["ui.sidebar.agents.title_command.popup command is empty; a click on the title opens nothing"]
+        );
+    }
+
+    #[test]
+    fn a_mistake_in_the_title_command_popup_costs_only_the_popup() {
+        let parse = |toml: &str| {
+            let config = toml::from_str::<crate::config::Config>(&format!(
+                "[ui]\nsidebar_width = 41\n[ui.sidebar.agents]\n\
+                 title_command = {{ command = \"usage\", {toml} }}\n"
+            ))
+            .expect("the config still parses");
+            assert_eq!(config.ui.sidebar_width, 41, "and keeps the rest");
+            let opens = config
+                .ui
+                .sidebar
+                .agents
+                .title_command
+                .as_ref()
+                .and_then(|title| title.popup.as_ref())
+                .and_then(AgentsTitlePopupConfig::usable)
+                .is_some();
+            (opens, title_command_diagnostics(&config.ui.sidebar.agents))
+        };
+        let disabled = |problem: &str| {
+            vec![format!(
+                "ui.sidebar.agents.title_command.popup {problem}; a click on the title opens nothing"
+            )]
+        };
+        assert_eq!(
+            parse("popup = { command = \"u\", width = \"200%\" }"),
+            (
+                false,
+                disabled("percentage must be between 1% and 100% in `width`")
+            )
+        );
+        let (opens, problems) = parse("popup = { width = 60 }");
+        assert!(!opens);
+        assert_eq!(problems.len(), 1);
+        assert!(
+            problems[0].contains("missing field `command`"),
+            "{problems:?}"
+        );
+        assert_eq!(
+            parse("popup = \"usage --details\""),
+            (
+                false,
+                disabled("must be a table such as { command = \"...\" }")
+            )
+        );
+        assert_eq!(
+            parse("popup = { command = \"u\", titel = \"Usage\" }"),
+            (
+                true,
+                vec![
+                    "unknown config key ui.sidebar.agents.title_command.popup.titel; ignoring key"
+                        .to_owned()
+                ]
+            ),
+            "an unknown key is only ignored, as elsewhere"
+        );
     }
 }

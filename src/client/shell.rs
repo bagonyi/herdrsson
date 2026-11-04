@@ -42,6 +42,7 @@ mod state;
 mod styled_text;
 mod surface_patch;
 mod text_editor;
+mod title_popup;
 mod unseen_counts;
 mod word_selection;
 mod worktrees;

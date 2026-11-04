@@ -947,6 +947,10 @@ pub struct ClientShellSnapshot {
     /// Optional, so a client and a server without it still understand each other.
     #[serde(default)]
     pub agent_panel_title: Option<String>,
+    /// Fork: the endpoint command a click on that title invokes (`command.invoke`), which opens
+    /// `title_command`'s popup; none without one. Optional, as `agent_panel_title` is.
+    #[serde(default)]
+    pub agent_panel_title_command_id: Option<String>,
     pub agent_order: Vec<String>,
     pub workspaces: Vec<ClientShellWorkspace>,
     pub tabs: Vec<ClientShellTab>,
@@ -2822,6 +2826,7 @@ mod tests {
             tab_bar_right_separator: " · ".into(),
             agent_view_label: None,
             agent_panel_title: None,
+            agent_panel_title_command_id: None,
             agent_order: Vec::new(),
             workspaces: vec![ClientShellWorkspace {
                 workspace_id: "w1".into(),

@@ -105,6 +105,8 @@ pub(super) struct ShellHitMap {
     pub(super) agent_scroll_metrics: Option<crate::pane::ScrollMetrics>,
     pub(super) agent_max_scroll: usize,
     pub(super) agent_sort_toggle: Rect,
+    /// Fork: the agents panel's `title_command` text, clicked to open its popup.
+    pub(super) agent_panel_title: Rect,
     pub(super) sidebar_divider: Rect,
     pub(super) sidebar_section_divider: Rect,
     pub(super) sidebar_toggle: Rect,
@@ -958,6 +960,8 @@ pub(crate) struct ClientShellState {
     pub(super) pane_mouse_gesture: Option<ClientPaneMouseGesture>,
     pub(super) link_hover: Option<super::link_hover::LinkHover>,
     pub(super) row_hover: Option<(u16, u16)>,
+    /// Fork: the agents panel title's popup, opened by a click here (`title_popup`).
+    pub(super) title_popup_anchor: Option<super::title_popup::TitlePopupAnchor>,
     pub(super) url_click_consumes_until_up: bool,
     /// A ctrl+click outside terminal content is down and taken as a right click.
     pub(super) ctrl_click_held: bool,
@@ -1139,6 +1143,7 @@ impl ClientShellState {
             pane_mouse_gesture: None,
             link_hover: None,
             row_hover: None,
+            title_popup_anchor: None,
             url_click_consumes_until_up: false,
             ctrl_click_held: false,
             host_reports_key_releases: false,
@@ -1334,6 +1339,7 @@ impl ClientShellState {
         self.pane_scroll_targets.clear();
         self.popup_pending = false;
         self.popup_pending_deadline = None;
+        self.title_popup_anchor = None;
         self.pending_integration_installs = 0;
         self.endpoint_notice_seen.clear();
         self.visible_endpoint_notice = None;
@@ -1783,6 +1789,7 @@ impl ClientShellState {
             self.endpoint_error = None;
             self.endpoint_error_deadline = None;
         }
+        self.track_title_popup(next_popup.as_deref());
         if next_popup.is_some() {
             self.popup_pending = false;
             self.popup_pending_deadline = None;
@@ -1892,6 +1899,7 @@ impl ClientShellState {
         {
             self.popup_pending = false;
             self.popup_pending_deadline = None;
+            self.forget_waiting_title_popup();
         }
     }
 

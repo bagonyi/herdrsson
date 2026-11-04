@@ -768,6 +768,7 @@ mod tests {
             command: "usage".into(),
             interval_seconds: 30,
             timeout_seconds: 2,
+            popup: None,
         };
         app.configure_tab_bar_status(&[], " ");
         app.configure_agent_panel_title(Some(&config));

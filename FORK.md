@@ -142,6 +142,13 @@ and the pill in the agents panel's title is Claude's weekly usage, from a script
   keeps the colours and bold it prints (SGR sequences), so the command draws its own look, such
   as a chip with a background; text without them is in the count's grey. In a narrow sidebar the
   status counts make room for it; it's left out only where it doesn't fit after the agent count.
+- A click on that text can open a command in a popup pane, as a key command with
+  `type = "popup"` does (`popup` in `title_command`), such as Claude's usage in detail. The popup
+  hangs from the text, below it or above it when there's no room below (in a window too short
+  for either, over it), with a title of your choosing in its frame, and closes when the command
+  exits. The text is tinted towards the accent colour while the mouse is over it and while its
+  popup is open (underlined in a theme of terminal colours). A mistake in `popup` only costs the
+  click, with a warning, not the whole config.
 - The agents panel's title can leave out the sort label (`grouped`, `priority` or a plugin's
   agent view's, such as `recent`), and with it the click that switches the order
   (`sort_label = false`); a title command's text then ends a column from the edge.
@@ -262,8 +269,10 @@ zen_width = 150
 hidden = true
 # A command whose last line shows in the agents panel's title, with the colours it prints, run
 # through the login shell every interval_seconds (5) and given timeout_seconds (2), as the tab
-# bar's command entries are. Default: none.
-title_command = { command = "date +%H:%M", interval_seconds = 30 }
+# bar's command entries are. A click on it runs popup's command in a popup pane under it, title
+# in its frame (popup), width and height in cells or a percentage (half the screen by default),
+# until the command exits. Default: none.
+title_command = { command = "date +%H:%M", interval_seconds = 30, popup = { command = "cal | less", title = "Calendar", width = 30, height = 12 } }
 # Leave the sort label (grouped, priority or an agent view's label) out of the agents panel's
 # title, and with it the click that switches the order. Default: true.
 sort_label = false
