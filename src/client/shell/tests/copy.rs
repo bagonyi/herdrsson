@@ -1756,8 +1756,8 @@ fn navigator_owns_search_mouse_selection_and_stable_target_focus() {
         .as_ref()
         .is_some_and(|cursor| cursor.visible));
 
-    state.handle_input_bytes(b"\x1b");
-    state.handle_input_bytes(b"a");
+    // Fork: Esc closes Go to, so Ctrl+U clears the search instead of Esc and `a`.
+    state.handle_input_bytes(b"\x15");
     state.compose(106, 30).expect("navigator rows");
     let pane_target = {
         let ClientShellOverlay::Navigator(navigator) = state.overlay.as_ref().expect("navigator")

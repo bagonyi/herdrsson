@@ -638,14 +638,9 @@ impl ClientShellState {
                     ..
                 }))
             );
+            // Fork: Esc closes Go to from its search box too, as `goto` opens it there.
             if code == KeyCode::Esc {
-                if search_focused {
-                    if let Some(ClientShellOverlay::Navigator(navigator)) = self.overlay.as_mut() {
-                        navigator.search_focused = false;
-                    }
-                } else {
-                    self.overlay = None;
-                }
+                self.overlay = None;
                 outcome.repaint = true;
                 return;
             }

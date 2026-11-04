@@ -255,6 +255,8 @@ mod copy;
 mod ctrl_click;
 mod endpoint_requests;
 mod endpoints;
+// Fork: Go to opens with its search box focused.
+mod goto_search;
 mod graphics;
 mod input_conformance;
 #[path = "input.rs"]

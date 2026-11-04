@@ -240,6 +240,9 @@ and the pill in the agents panel's title is Claude's weekly usage, from a script
   would only change what zen mode hides. The screen holds while the pane comes back at its new
   size, so turning zen mode on or off or resizing it doesn't flash the sidebar. The prefix bar
   shows the zen mode key. All three keys are unset by default.
+- `goto` (`prefix+g`) opens Go to with its search box focused, so you can type a name straight
+  away instead of pressing `/` first, and Esc closes it, from the search box too (stock Herdr's
+  first Esc there goes back to the list).
 
 ### plugin panes
 

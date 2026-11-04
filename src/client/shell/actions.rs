@@ -51,6 +51,11 @@ impl ClientShellState {
                 }
                 if action == crate::input::KeybindAction::OpenNavigator {
                     self.open_navigator_overlay();
+                    // Fork: Go to opens with its search box focused, so typing searches at once;
+                    // Esc closes it.
+                    if let Some(ClientShellOverlay::Navigator(navigator)) = self.overlay.as_mut() {
+                        navigator.search_focused = true;
+                    }
                     outcome.repaint = true;
                     return;
                 }
