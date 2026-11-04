@@ -115,6 +115,12 @@ impl App {
             return Vec::new();
         }
 
+        // Fork: see detect/manifest/background_shells.rs.
+        if let AppEvent::BackgroundShellsObserved { pane_id, count } = ev {
+            self.set_background_shells_token(pane_id, count);
+            return Vec::new();
+        }
+
         if let AppEvent::GitStatusRefreshed {
             results,
             cache_updates,
@@ -804,6 +810,33 @@ impl App {
                 event: crate::api::schema::EventKind::PaneUpdated,
                 data: crate::api::schema::EventData::PaneUpdated { pane },
             });
+        }
+    }
+
+    /// Fork: a Claude agent's background shells as its pane's `$shells` token, set and cleared by
+    /// what its footer shows (see detect/manifest/background_shells.rs).
+    fn set_background_shells_token(&mut self, pane_id: crate::layout::PaneId, count: u32) {
+        use crate::detect::manifest::background_shells::{token_text, SHELLS_TOKEN};
+        let Some(ws_idx) = self
+            .state
+            .workspaces
+            .iter()
+            .position(|workspace| workspace.pane_state(pane_id).is_some())
+        else {
+            return;
+        };
+        let Some(terminal) = self.state.workspaces[ws_idx]
+            .pane_state(pane_id)
+            .map(|pane| pane.attached_terminal_id.clone())
+            .and_then(|terminal_id| self.state.terminals.get_mut(&terminal_id))
+        else {
+            return;
+        };
+        let patch =
+            std::collections::HashMap::from([(SHELLS_TOKEN.to_string(), token_text(count))]);
+        if terminal.metadata_tokens.patch(patch, None, Instant::now()) {
+            terminal.revision = terminal.revision.saturating_add(1);
+            self.emit_pane_updated(ws_idx, pane_id);
         }
     }
 

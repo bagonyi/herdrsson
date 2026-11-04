@@ -396,6 +396,10 @@ impl App {
     ) -> std::io::Result<Self> {
         let prefix_keys = config.prefix_keys();
         crate::kitty_graphics::set_enabled(config.kitty_graphics_enabled());
+        // Fork: see detect/manifest/background_shells.rs.
+        crate::detect::manifest::background_shells::set_count_as_working(
+            config.advanced.claude_background_shells_working,
+        );
         let (event_tx, event_rx) = mpsc::channel::<AppEvent>(APP_EVENT_CHANNEL_CAPACITY);
         let render_notify = Arc::new(Notify::new());
         let render_dirty = Arc::new(crate::render_signal::RenderSignal::new());
@@ -978,6 +982,10 @@ impl App {
 
         if !invalid_section("advanced") {
             self.state.pane_scrollback_limit_bytes = config.advanced.scrollback_limit_bytes;
+            // Fork: idle agents pick it up at their next screen change.
+            crate::detect::manifest::background_shells::set_count_as_working(
+                config.advanced.claude_background_shells_working,
+            );
         }
 
         if !invalid_section("update") {

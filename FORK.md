@@ -131,6 +131,17 @@ and the pill in the agents panel's title is Claude's weekly usage, from a script
   asking to edit a file is one), as do prompts recognised by their controls. A prompt only a
   fallback rule catches that appears while the agent is idle shows 5 seconds late. Stock Herdr
   counts every reading straight away.
+- A Claude agent's background shells show in its row as `$shells`, in Claude's words: `1 shell`,
+  `2 shells`. Herdr reads them from the footer under Claude's prompt box
+  (`⏵⏵ auto mode on · 2 shells`), so the token comes and goes with them.
+- With `claude_background_shells_working`, an idle Claude agent counts as working while one of its
+  background shells is still running. Claude can start a long job, end its turn and be woken
+  when the job finishes, and its tab stays ⏳ until then instead of showing done halfway. Only
+  an idle reading changes, so a question or permission prompt still reads blocked. A shell that
+  never ends, such as a dev server, keeps the agent working until you stop it, which is why
+  Herdr stopped counting background shells as work
+  ([#3468](https://github.com/herdrdev/herdr/pull/3468)); stock Herdr counts such an agent as
+  idle.
 - The agents panel can be hidden, giving the spaces list the whole sidebar.
 - The agents panel's title shows how many agents it lists, `agents · 24`, counting only those a
   plugin's agent view shows, then how many are blocked, done, working and idle, `· ● 2  ● 3  ○ 19`, in
@@ -257,7 +268,7 @@ and the pill in the agents panel's title is Claude's weekly usage, from a script
 
 ## settings
 
-Ten settings are new; all go in `~/.config/herdr/config.toml`:
+Eleven settings are new; all go in `~/.config/herdr/config.toml`:
 
 ```toml
 [ui]
@@ -298,6 +309,11 @@ zen_mode = "prefix+shift+z"
 # Narrower and wider, only in zen mode; outside it these keys reach the pane.
 zen_narrower = "ctrl+shift+h"
 zen_wider = "ctrl+shift+l"
+
+[advanced]
+# An idle Claude agent counts as working while its footer shows a background shell still
+# running (`· 1 shell`). Default: false, as in stock Herdr.
+claude_background_shells_working = true
 ```
 
 Herdr has no key for moving spaces up and down. Its socket API can (`workspace.move_block`), so

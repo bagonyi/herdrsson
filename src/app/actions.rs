@@ -1468,6 +1468,8 @@ impl AppState {
                 })
                 .into_iter()
                 .collect(),
+            // Fork: the app sets the `$shells` token before events reach this state.
+            AppEvent::BackgroundShellsObserved { .. } => Vec::new(),
             AppEvent::StateChanged {
                 pane_id,
                 agent,
