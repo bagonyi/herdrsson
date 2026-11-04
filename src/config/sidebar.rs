@@ -167,6 +167,8 @@ pub enum AgentSidebarToken {
         rules: Vec<SidebarTokenRule>,
         /// Fork: `fg_scale`, the colour blended by the number the token shows.
         fg_scale: Vec<SidebarColorStop>,
+        /// Fork: `prefix`, text shown before the value whenever the token shows, e.g. an icon.
+        prefix: Option<String>,
     },
 }
 
@@ -184,6 +186,8 @@ pub enum SpaceSidebarToken {
         rules: Vec<SidebarTokenRule>,
         /// Fork: `fg_scale`, the colour blended by the number the token shows.
         fg_scale: Vec<SidebarColorStop>,
+        /// Fork: `prefix`, text shown before the value whenever the token shows, e.g. an icon.
+        prefix: Option<String>,
     },
 }
 
@@ -204,6 +208,14 @@ impl AgentSidebarToken {
     pub(crate) fn text_for_value(&self, value: &str) -> Option<&str> {
         match self {
             Self::Styled { rules, .. } => rules::matching_text(rules, value),
+            _ => None,
+        }
+    }
+
+    /// Fork: the text shown before the token's value (`prefix = "..."`).
+    pub(crate) fn prefix(&self) -> Option<&str> {
+        match self {
+            Self::Styled { prefix, .. } => prefix.as_deref(),
             _ => None,
         }
     }
@@ -233,6 +245,14 @@ impl SpaceSidebarToken {
     pub(crate) fn text_for_value(&self, value: &str) -> Option<&str> {
         match self {
             Self::Styled { rules, .. } => rules::matching_text(rules, value),
+            _ => None,
+        }
+    }
+
+    /// Fork: the text shown before the token's value (`prefix = "..."`).
+    pub(crate) fn prefix(&self) -> Option<&str> {
+        match self {
+            Self::Styled { prefix, .. } => prefix.as_deref(),
             _ => None,
         }
     }
@@ -275,14 +295,20 @@ struct RawStyledSidebarToken {
     fg_scale: Vec<SidebarColorStop>,
     #[serde(default)]
     separator: Option<SidebarTokenSeparator>,
+    #[serde(default)]
+    prefix: Option<String>,
 }
 
-/// A token's name, style, rules and colour scale, as written in the config.
+/// Fork: the most a `prefix` may hold, in characters.
+const MAX_PREFIX_CHARS: usize = 16;
+
+/// A token's name, style, rules, colour scale and prefix, as written in the config.
 type RawTokenParts = (
     String,
     Option<SidebarTokenStyle>,
     Vec<SidebarTokenRule>,
     Vec<SidebarColorStop>,
+    Option<String>,
 );
 
 #[derive(Deserialize)]
@@ -295,7 +321,7 @@ enum RawSidebarToken {
 impl RawSidebarToken {
     fn parts(self) -> Result<RawTokenParts, String> {
         match self {
-            Self::Plain(token) => Ok((token, None, Vec::new(), Vec::new())),
+            Self::Plain(token) => Ok((token, None, Vec::new(), Vec::new(), None)),
             Self::Styled(token) => {
                 if token.rules.len() > 16 {
                     return Err("sidebar tokens may contain at most 16 rules".into());
@@ -314,6 +340,18 @@ impl RawSidebarToken {
                 {
                     return Err("sidebar fg_scale requires a text-valued token".into());
                 }
+                if let Some(prefix) = &token.prefix {
+                    if matches!(token.token.as_str(), "state_icon" | "git_status") {
+                        return Err("sidebar prefix requires a text-valued token".into());
+                    }
+                    if prefix.chars().count() > MAX_PREFIX_CHARS
+                        || prefix.chars().any(char::is_control)
+                    {
+                        return Err(format!(
+                            "sidebar prefix must be at most {MAX_PREFIX_CHARS} characters, without control characters"
+                        ));
+                    }
+                }
                 Ok((
                     token.token,
                     Some(SidebarTokenStyle {
@@ -325,6 +363,7 @@ impl RawSidebarToken {
                     }),
                     token.rules,
                     token.fg_scale,
+                    token.prefix,
                 ))
             }
         }
@@ -359,6 +398,7 @@ fn serialize_styled_token<S>(
     style: SidebarTokenStyle,
     rules: &[SidebarTokenRule],
     fg_scale: &[SidebarColorStop],
+    prefix: Option<&str>,
     serializer: S,
 ) -> Result<S::Ok, S::Error>
 where
@@ -387,6 +427,9 @@ where
     }
     if let Some(separator) = style.separator {
         map.serialize_entry("separator", &separator)?;
+    }
+    if let Some(prefix) = prefix {
+        map.serialize_entry("prefix", prefix)?;
     }
     map.end()
 }
@@ -430,9 +473,15 @@ impl Serialize for AgentSidebarToken {
                 style,
                 rules,
                 fg_scale,
-            } => {
-                serialize_styled_token(agent_token_name(token), *style, rules, fg_scale, serializer)
-            }
+                prefix,
+            } => serialize_styled_token(
+                agent_token_name(token),
+                *style,
+                rules,
+                fg_scale,
+                prefix.as_deref(),
+                serializer,
+            ),
             token => serializer.serialize_str(&agent_token_name(token)),
         }
     }
@@ -449,7 +498,7 @@ impl<'de> Deserialize<'de> for AgentSidebarToken {
     where
         D: serde::Deserializer<'de>,
     {
-        let (value, style, rules, fg_scale) = RawSidebarToken::deserialize(deserializer)?
+        let (value, style, rules, fg_scale, prefix) = RawSidebarToken::deserialize(deserializer)?
             .parts()
             .map_err(serde::de::Error::custom)?;
         let token = parse_sidebar_token(
@@ -472,6 +521,7 @@ impl<'de> Deserialize<'de> for AgentSidebarToken {
             style,
             rules,
             fg_scale,
+            prefix,
         }))
     }
 }
@@ -487,9 +537,15 @@ impl Serialize for SpaceSidebarToken {
                 style,
                 rules,
                 fg_scale,
-            } => {
-                serialize_styled_token(space_token_name(token), *style, rules, fg_scale, serializer)
-            }
+                prefix,
+            } => serialize_styled_token(
+                space_token_name(token),
+                *style,
+                rules,
+                fg_scale,
+                prefix.as_deref(),
+                serializer,
+            ),
             token => serializer.serialize_str(&space_token_name(token)),
         }
     }
@@ -506,7 +562,7 @@ impl<'de> Deserialize<'de> for SpaceSidebarToken {
     where
         D: serde::Deserializer<'de>,
     {
-        let (value, style, rules, fg_scale) = RawSidebarToken::deserialize(deserializer)?
+        let (value, style, rules, fg_scale, prefix) = RawSidebarToken::deserialize(deserializer)?
             .parts()
             .map_err(serde::de::Error::custom)?;
         let token = parse_sidebar_token(
@@ -525,6 +581,7 @@ impl<'de> Deserialize<'de> for SpaceSidebarToken {
             style,
             rules,
             fg_scale,
+            prefix,
         }))
     }
 }
