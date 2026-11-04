@@ -409,6 +409,9 @@ uses the Herdr number.
 - 2026.11.04 (on Herdr 0.9.5): a click on the agents panel's title can open a command in a popup
   under it, such as Claude's usage in detail. Go to opens on its search box, and Esc closes it at
   once.
+- 2026.11.04.2 (on Herdr 0.9.5): a Claude agent's background shells show in its row as
+  `$shells`, and with `claude_background_shells_working` an idle Claude waiting on one counts as
+  working.
 
 ## caveats
 
