@@ -165,12 +165,7 @@ impl SidebarTokenRule {
                 }
             }
             Condition::GreaterThan(threshold) | Condition::LessThan(threshold) => {
-                let parsed = numeric.get_or_insert_with(|| {
-                    value
-                        .parse::<f64>()
-                        .ok()
-                        .filter(|number| number.is_finite())
-                });
+                let parsed = numeric.get_or_insert_with(|| number_or_seconds(value));
                 parsed.is_some_and(|number| match self.condition {
                     Condition::GreaterThan(_) => number > *threshold,
                     _ => number < *threshold,
@@ -178,6 +173,30 @@ impl SidebarTokenRule {
             }
         }
     }
+}
+
+/// A rule's number: the value as a number or, fork, a time as the sidebar's time formats show it
+/// (`50s`, `9m`, `2h`, `1d`) as its seconds, so `lt = 600` matches the last 10 minutes of
+/// `format = "time_left"`.
+fn number_or_seconds(value: &str) -> Option<f64> {
+    if let Ok(number) = value.parse::<f64>() {
+        return number.is_finite().then_some(number);
+    }
+    let seconds_per_unit = match value.chars().last()? {
+        's' => 1.0,
+        'm' => 60.0,
+        'h' => 3_600.0,
+        'd' => 86_400.0,
+        _ => return None,
+    };
+    let digits = &value[..value.len() - 1];
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    digits
+        .parse::<f64>()
+        .ok()
+        .map(|number| number * seconds_per_unit)
 }
 
 pub(super) fn matching_style(
@@ -257,5 +276,23 @@ mod tests {
                 assert!(!rule.matches(value, &mut None), "{condition}: {value}");
             }
         }
+    }
+
+    // Fork: see number_or_seconds.
+    #[test]
+    fn numeric_conditions_read_a_time_as_its_seconds() {
+        let rule: SidebarTokenRule = toml::from_str("lt = 600").unwrap();
+        for value in ["9m", "50s", "0s", "599"] {
+            assert!(rule.matches(value, &mut None), "{value}");
+        }
+        for value in [
+            "10m", "59m", "1h", "1d", "9 m", "m", "9.5m", "-9m", "9M", "9mm", "9ms",
+        ] {
+            assert!(!rule.matches(value, &mut None), "{value}");
+        }
+        let rule: SidebarTokenRule = toml::from_str("gt = 3600").unwrap();
+        assert!(rule.matches("2h", &mut None));
+        assert!(rule.matches("1d", &mut None));
+        assert!(!rule.matches("1h", &mut None));
     }
 }
