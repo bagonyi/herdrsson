@@ -375,7 +375,16 @@ impl App {
                 osc_progress: &osc_progress,
             },
         );
-        let value = crate::detect::manifest::explain_to_json_value(&explain);
+        // Fork: see detect/manifest/background_shells.rs.
+        let (explain, background_shells) =
+            crate::detect::manifest::background_shells::explain(explain, agent, &screen, || {
+                pane.child_pid()
+                    .and_then(|shell_pid| crate::pane::foreground_agent_pid(shell_pid, agent))
+            });
+        let mut value = crate::detect::manifest::explain_to_json_value(&explain);
+        if let Some(background_shells) = background_shells {
+            value["background_shells"] = background_shells;
+        }
 
         encode_success(id, ResponseResult::AgentExplain { explain: value })
     }
