@@ -152,13 +152,10 @@ fn footer(agent: Option<Agent>, screen: &str) -> Footer {
     }
 }
 
-/// The `$shells` token's text for a count, in Claude's words; none without shells.
+/// The `$shells` token's text for a count: just the number, which a row's `prefix` can give an
+/// icon; none without shells.
 pub fn token_text(count: u32) -> Option<String> {
-    match count {
-        0 => None,
-        1 => Some("1 shell".to_string()),
-        count => Some(format!("{count} shells")),
-    }
+    (count > 0).then(|| count.to_string())
 }
 
 /// For the pane's detection loop: an idle reading of a Claude agent becomes working while its
@@ -761,10 +758,10 @@ mod tests {
     }
 
     #[test]
-    fn token_text_uses_claudes_words() {
+    fn token_text_is_the_count() {
         assert_eq!(token_text(0), None);
-        assert_eq!(token_text(1).as_deref(), Some("1 shell"));
-        assert_eq!(token_text(3).as_deref(), Some("3 shells"));
+        assert_eq!(token_text(1).as_deref(), Some("1"));
+        assert_eq!(token_text(3).as_deref(), Some("3"));
     }
 
     #[test]

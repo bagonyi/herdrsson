@@ -131,8 +131,8 @@ and the pill in the agents panel's title is Claude's weekly usage, from a script
   asking to edit a file is one), as do prompts recognised by their controls. A prompt only a
   fallback rule catches that appears while the agent is idle shows 5 seconds late. Stock Herdr
   counts every reading straight away.
-- A Claude agent's background shells show in its row as `$shells`, in Claude's words: `1 shell`,
-  `2 shells`. Herdr reads them from the footer under Claude's prompt box
+- A Claude agent's background shells show in its row as `$shells`, their number: `2`, with a
+  `prefix` for an icon, e.g. `󰞷 2`. Herdr reads them from the footer under Claude's prompt box
   (`⏵⏵ auto mode on · 2 shells`), so the token comes and goes with them.
 - With `claude_background_shells_working`, an idle Claude agent counts as working while one of its
   background shells is still running. Claude can start a long job, end its turn and be woken
@@ -208,6 +208,10 @@ and the pill in the agents panel's title is Claude's weekly usage, from a script
   `separator = "space"`, or nothing, `separator = "none"`. E.g.
   `{ token = "$cache_pings", separator = "space" }` puts Claude Cache Timer's `↻ 5` right after
   the bar's time, `▰▰▰▱▱▱ 28m ↻ 5`.
+- A sidebar token can show text before its value whenever it shows, `prefix = "..."` (up to 16
+  characters), e.g. an icon: `{ token = "$subagents", prefix = "󰚩 " }` shows Claude Subagents'
+  count as `󰚩 2`. Rules and `fg_scale` still read the value without it, and a rule's `text` gets
+  it too; a `format = "ago"` token shows `working` without it while its agent works.
 - Agents not active for a while can look different, to tell them at a glance from the ones you
   are working with. Under `[ui.sidebar.agents.older]`, an agent counts as older once
   `after_minutes` have passed since the Unix time in its `token`, e.g. Agent Recency's

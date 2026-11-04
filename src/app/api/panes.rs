@@ -4507,7 +4507,7 @@ mod tests {
         observe(&mut app, 2);
         assert_eq!(
             app.state.terminals[&terminal_id].metadata_tokens.values(),
-            std::collections::HashMap::from([("shells".into(), "2 shells".into())])
+            std::collections::HashMap::from([("shells".into(), "2".into())])
         );
         observe(&mut app, 0);
         assert!(app.state.terminals[&terminal_id]

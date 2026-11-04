@@ -55,6 +55,22 @@ impl ResolvedTokenKind {
             Self::StateIcon | Self::GitStatus { .. } => {}
         }
     }
+
+    /// Fork: shows `prefix` before the value, for a token's `prefix`.
+    fn prepend(&mut self, prefix: &str) {
+        match self {
+            Self::StateText(value)
+            | Self::Machine(value)
+            | Self::Workspace(value)
+            | Self::Tab(value)
+            | Self::Pane(value)
+            | Self::Agent(value)
+            | Self::TerminalTitle(value)
+            | Self::Branch(value)
+            | Self::Custom(value) => value.insert_str(0, prefix),
+            Self::StateIcon | Self::GitStatus { .. } => {}
+        }
+    }
 }
 
 impl ResolvedToken {
@@ -135,6 +151,10 @@ pub(crate) fn agent_rows(
                     {
                         kind.set_text(text);
                     }
+                    // Fork: after rules, which read the value without it.
+                    if let Some(prefix) = configured.prefix() {
+                        kind.prepend(prefix);
+                    }
                     Some(ResolvedToken::new(kind, style))
                 })
                 .collect::<Vec<_>>();
@@ -194,6 +214,10 @@ pub(crate) fn space_rows(
                         .and_then(|value| configured.text_for_value(value))
                     {
                         kind.set_text(text);
+                    }
+                    // Fork: after rules, which read the value without it.
+                    if let Some(prefix) = configured.prefix() {
+                        kind.prepend(prefix);
                     }
                     Some(ResolvedToken::new(kind, style))
                 })
@@ -463,6 +487,51 @@ rows = [[{ token = "$size", fg_scale = [{ at = 0, fg = "#000000" }, { at = 1_000
             r##"rows = [[{ token = "$pings", separator = " | " }]]"##,
         )
         .is_err());
+    }
+
+    #[test]
+    fn a_token_can_show_a_prefix_that_rules_dont_see() {
+        let config: AgentsSidebarConfig = toml::from_str(
+            r##"rows = [[
+  { token = "$agents", prefix = "󰚩 ", rules = [{ gt = 3, fg = "#ff9e64" }] },
+  { token = "$shells", prefix = "󰞷 ", rules = [{ equals = "9", text = "many" }] },
+  { token = "$absent", prefix = "x " },
+]]"##,
+        )
+        .unwrap();
+        let mut entry = entry();
+        entry.tokens.insert("agents".into(), "4".into());
+        entry.tokens.insert("shells".into(), "9".into());
+        let rows = agent_rows(&config, context(&entry), "working");
+        assert_eq!(
+            rows[0]
+                .iter()
+                .map(|token| token.kind.clone())
+                .collect::<Vec<_>>(),
+            [
+                ResolvedTokenKind::Custom("󰚩 4".into()),
+                ResolvedTokenKind::Custom("󰞷 many".into()),
+            ],
+            "a missing token shows no prefix either"
+        );
+        assert!(
+            rows[0][0].style.fg.is_some(),
+            "the rule read the bare number"
+        );
+
+        let round_trip: AgentsSidebarConfig =
+            toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(round_trip, config);
+        for invalid in [
+            r##"rows = [[{ token = "state_icon", prefix = "a" }]]"##,
+            r##"rows = [[{ token = "$x", prefix = "seventeen chars.." }]]"##,
+            r##"rows = [[{ token = "$x", prefix = "a\u001b[31m" }]]"##,
+        ] {
+            assert!(
+                toml::from_str::<AgentsSidebarConfig>(invalid).is_err(),
+                "{invalid}"
+            );
+        }
     }
 
     #[test]
