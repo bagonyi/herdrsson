@@ -258,6 +258,7 @@ pub(super) fn snapshot_with_completions(
         tab_bar_right_separator: app.state.tab_bar_right_separator.clone(),
         agent_view_label,
         agent_panel_title: app.state.agent_panel_title.clone(),
+        agent_panel_title_command_id: app.agent_panel_title_command_id(),
         agent_order,
         workspaces,
         tabs,

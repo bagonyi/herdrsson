@@ -2057,6 +2057,11 @@ impl ClientShellState {
                     outcome.repaint = true;
                     return;
                 }
+                if super::contains(self.hits.agent_panel_title, point)
+                    && self.open_agent_panel_title_popup(outcome)
+                {
+                    return;
+                }
                 if self.handle_endpoint_machine_click(point, outcome) {
                     return;
                 }

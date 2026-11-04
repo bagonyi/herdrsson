@@ -175,19 +175,21 @@ pub(super) fn render_agent_panel_header(
     }
     let end = sort_rect.x.saturating_sub(1);
     let counts_x = area.x + 8 + display_width(&count_text) as u16 + 1;
-    let counts_right = render_agent_panel_title(
-        buffer,
-        counts_x,
-        area.y + 1,
-        if sort_label.is_some() {
-            end.saturating_sub(1)
-        } else {
-            end
-        },
-        title,
-        config,
-    )
-    .map_or(end, |title_x| title_x.saturating_sub(2));
+    let title_right = if sort_label.is_some() {
+        end.saturating_sub(1)
+    } else {
+        end
+    };
+    let title_x =
+        render_agent_panel_title(buffer, counts_x, area.y + 1, title_right, title, config);
+    // Fork: a click on the title opens `title_command`'s popup, when the server has one.
+    hits.agent_panel_title = match title_x {
+        Some(title_x) if config.mouse_capture => {
+            Rect::new(title_x, area.y + 1, title_right - title_x, 1)
+        }
+        _ => Rect::default(),
+    };
+    let counts_right = title_x.map_or(end, |title_x| title_x.saturating_sub(2));
     render_agent_status_counts(
         buffer,
         counts_x,

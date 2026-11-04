@@ -259,6 +259,7 @@ impl ClientShellState {
                     selection,
                 };
                 if action == crate::protocol::ClientShellCommandAction::Popup {
+                    self.forget_waiting_title_popup();
                     self.popup_pending = true;
                     self.popup_pending_deadline = None;
                     if !self.push_endpoint_method_with_kind(
@@ -640,6 +641,7 @@ impl ClientShellState {
                     Err(_) => {
                         self.popup_pending = false;
                         self.popup_pending_deadline = None;
+                        self.forget_failed_title_popup();
                         (true, Vec::new())
                     }
                 };

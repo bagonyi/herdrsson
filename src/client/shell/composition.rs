@@ -580,6 +580,7 @@ impl ClientShellState {
             let height = popup.height.map(client_popup_size);
             if let Some(geometry) =
                 crate::popup_size::resolve_popup_geometry(width, height, layout.pane_surface)
+                    .map(|geometry| self.place_popup(&popup.terminal_id, geometry, cols, rows))
             {
                 occlusion.start_popup(geometry.outer);
                 let mut composed = frame.to_ratatui_buffer()?;

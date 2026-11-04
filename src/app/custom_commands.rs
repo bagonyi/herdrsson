@@ -22,6 +22,11 @@ pub(super) fn new_command_namespace() -> String {
 #[derive(Debug)]
 pub(super) struct EndpointCommandRegistry {
     entries: Vec<EndpointCommand>,
+    /// Fork: `[ui.sidebar.agents] title_command`'s popup, which a click on the agents panel's
+    /// title invokes. It has no key, so it stays out of the command manifest; the snapshot names
+    /// its id in `agent_panel_title_command_id` instead.
+    title_popup: Option<EndpointCommand>,
+    namespace: String,
 }
 
 #[derive(Debug)]
@@ -43,7 +48,36 @@ impl EndpointCommandRegistry {
                 binding: binding.clone(),
             })
             .collect();
-        Self { entries }
+        Self {
+            entries,
+            title_popup: None,
+            namespace,
+        }
+    }
+
+    /// Fork: add the agents panel title's popup, when it has a command.
+    pub(super) fn with_title_popup(
+        mut self,
+        title_command: Option<&crate::config::AgentsTitleCommandConfig>,
+    ) -> Self {
+        let popup = title_command
+            .and_then(|title| title.popup.as_ref())
+            .and_then(crate::config::AgentsTitlePopupConfig::usable);
+        self.title_popup = popup.map(|popup| EndpointCommand {
+            id: format!("cmd_{}_agent_panel_title", self.namespace),
+            binding: crate::config::CustomCommandKeybind {
+                bindings: crate::config::ActionKeybinds::default(),
+                label: String::new(),
+                command: popup.command.clone(),
+                action: crate::config::CustomCommandAction::Popup,
+                // The popup's title, which a key command's description never is.
+                description: popup.title.clone(),
+                width: popup.width,
+                height: popup.height,
+            },
+            action: crate::protocol::ClientShellCommandAction::Popup,
+        });
+        self
     }
 }
 
@@ -73,8 +107,18 @@ impl App {
         self.endpoint_commands
             .entries
             .iter()
+            .chain(&self.endpoint_commands.title_popup)
             .find(|entry| entry.id == id)
             .map(|entry| entry.binding.clone())
+    }
+
+    /// Fork: the id a client invokes for a click on the agents panel's title, none when
+    /// `title_command` has no popup.
+    pub(crate) fn agent_panel_title_command_id(&self) -> Option<String> {
+        self.endpoint_commands
+            .title_popup
+            .as_ref()
+            .map(|entry| entry.id.clone())
     }
 
     pub(crate) fn handle_command_invoke(
@@ -112,7 +156,37 @@ impl App {
         } else {
             None
         };
-        self.execute_custom_command_response(id, &binding, selected_text)
+        let popup_before = self
+            .state
+            .popup_pane
+            .as_ref()
+            .map(|popup| popup.terminal_id.clone());
+        let response = self.execute_custom_command_response(id, &binding, selected_text);
+        if self.agent_panel_title_command_id().as_deref() == Some(params.command_id.as_str()) {
+            self.title_agent_panel_title_popup(popup_before, binding.description.as_deref());
+        }
+        response
+    }
+
+    /// Fork: the agents panel title's popup shows its `title` in its frame, with a space either
+    /// side, once it has opened; one that was already open keeps its own.
+    fn title_agent_panel_title_popup(
+        &mut self,
+        popup_before: Option<crate::terminal::TerminalId>,
+        title: Option<&str>,
+    ) {
+        let Some(title) = title.map(str::trim).filter(|title| !title.is_empty()) else {
+            return;
+        };
+        let Some(popup) = self.state.popup_pane.as_ref() else {
+            return;
+        };
+        if popup_before.as_ref() == Some(&popup.terminal_id) {
+            return;
+        }
+        if let Some(terminal) = self.state.terminals.get_mut(&popup.terminal_id) {
+            terminal.manual_label = Some(format!(" {title} "));
+        }
     }
 
     fn execute_custom_command_response(
@@ -612,6 +686,84 @@ mod tests {
                 .map(|binding| binding.command),
             Some("secret-command --token hidden".into())
         );
+    }
+
+    #[test]
+    fn the_agent_panel_title_popup_has_an_id_outside_the_manifest() {
+        let mut app = test_app();
+        let title = |popup: Option<&str>| crate::config::AgentsTitleCommandConfig {
+            command: "usage".into(),
+            interval_seconds: 30,
+            timeout_seconds: 10,
+            popup: popup.map(|command| crate::config::AgentsTitlePopupConfig {
+                command: command.into(),
+                title: Some("Usage".into()),
+                width: Some(crate::popup_size::PopupSize::Cells(60)),
+                height: None,
+                invalid: None,
+                unknown_keys: Vec::new(),
+            }),
+        };
+        app.endpoint_commands = super::EndpointCommandRegistry::new(&[binding(
+            crate::config::CustomCommandAction::Shell,
+        )])
+        .with_title_popup(Some(&title(Some("usage --details"))));
+        assert_eq!(
+            app.client_shell_command_manifest().len(),
+            1,
+            "only the key commands are in the manifest"
+        );
+        let id = app
+            .agent_panel_title_command_id()
+            .expect("the popup has an id");
+        let popup = app.resolve_client_shell_command(&id).expect("it resolves");
+        assert_eq!(popup.command, "usage --details");
+        assert_eq!(popup.action, crate::config::CustomCommandAction::Popup);
+        assert_eq!(popup.width, Some(crate::popup_size::PopupSize::Cells(60)));
+        assert_ne!(id, app.client_shell_command_manifest()[0].command_id);
+
+        for title in [None, Some(title(None)), Some(title(Some(" ")))] {
+            app.endpoint_commands =
+                super::EndpointCommandRegistry::new(&[]).with_title_popup(title.as_ref());
+            assert_eq!(app.agent_panel_title_command_id(), None);
+        }
+        assert!(
+            app.resolve_client_shell_command(&id).is_none(),
+            "an old id goes with the popup"
+        );
+    }
+
+    #[test]
+    fn the_agent_panel_title_popup_shows_its_title_once_it_opens() {
+        let mut app = test_app();
+        let label = |app: &crate::app::App| {
+            let popup = app.state.popup_pane.as_ref()?;
+            app.state
+                .terminals
+                .get(&popup.terminal_id)?
+                .manual_label
+                .clone()
+        };
+        app.title_agent_panel_title_popup(None, Some("Usage"));
+        assert_eq!(label(&app), None, "no popup opened");
+
+        let terminal_id = crate::terminal::TerminalId::alloc();
+        app.state.terminals.insert(
+            terminal_id.clone(),
+            crate::terminal::TerminalState::new(terminal_id.clone(), "/popup".into()),
+        );
+        app.state.popup_pane = Some(crate::app::state::PopupPaneState {
+            pane_id: crate::layout::PaneId::alloc(),
+            terminal_id: terminal_id.clone(),
+            width: None,
+            height: None,
+        });
+        app.title_agent_panel_title_popup(Some(terminal_id.clone()), Some("Usage"));
+        assert_eq!(label(&app), None, "a popup already open keeps its title");
+        app.title_agent_panel_title_popup(None, Some("  "));
+        assert_eq!(label(&app), None, "a blank title leaves `popup`");
+        app.title_agent_panel_title_popup(None, Some("Usage"));
+        assert_eq!(label(&app).as_deref(), Some(" Usage "));
     }
 
     #[test]
