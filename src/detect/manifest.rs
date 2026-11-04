@@ -366,12 +366,10 @@ pub fn detect(agent: Agent, screen_content: &str) -> AgentDetection {
 }
 
 pub fn detect_with_osc(agent: Agent, input: DetectionInput<'_>) -> AgentDetection {
-    let explain = match load_manifest(agent) {
-        Some(loaded) => evaluate_loaded_manifest(agent, input, loaded, false),
-        None => fallback_explain(Some(agent), None, false),
+    let Some(loaded) = load_manifest(agent) else {
+        return fallback_explain(Some(agent), None, false).into_detection();
     };
-    // Fork: see background_shells.rs.
-    background_shells::count_as_working(agent, input, explain).into_detection()
+    evaluate_loaded_manifest(agent, input, loaded, false).into_detection()
 }
 
 pub fn explain(agent: Agent, screen_content: &str) -> DetectionExplain {
@@ -386,12 +384,10 @@ pub fn explain(agent: Agent, screen_content: &str) -> DetectionExplain {
 }
 
 pub fn explain_with_input(agent: Agent, input: DetectionInput<'_>) -> DetectionExplain {
-    let explain = match load_manifest(agent) {
-        Some(loaded) => evaluate_loaded_manifest(agent, input, loaded, true),
-        None => fallback_explain(Some(agent), None, true),
+    let Some(loaded) = load_manifest(agent) else {
+        return fallback_explain(Some(agent), None, true);
     };
-    // Fork: see background_shells.rs.
-    background_shells::count_as_working(agent, input, explain)
+    evaluate_loaded_manifest(agent, input, loaded, true)
 }
 
 pub fn explain_for_label(agent_label: &str, screen_content: &str) -> DetectionExplain {

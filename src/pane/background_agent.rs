@@ -36,6 +36,11 @@ pub(super) struct AgentJobTracker {
 }
 
 impl AgentJobTracker {
+    /// Fork: the agent's process, for its background shells.
+    pub(super) fn agent_pid(&self) -> Option<u32> {
+        self.process.map(|process| process.pid)
+    }
+
     /// A held agent must be rechecked even when lifecycle-hook authority would
     /// otherwise skip probing, so a job killed in the background is noticed.
     pub(super) fn in_background(&self) -> bool {

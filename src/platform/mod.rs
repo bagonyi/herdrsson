@@ -599,6 +599,12 @@ pub fn process_agent_hint(_pid: u32) -> Option<crate::detect::Agent> {
     None
 }
 
+/// Fork: Claude's background shells are read only on Linux and macOS.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn child_shell_argvs(_pid: u32) -> Vec<Vec<String>> {
+    Vec::new()
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn parse_agent_env_hint(environ: &[u8]) -> Option<crate::detect::Agent> {
     for record in environ.split(|&byte| byte == 0) {

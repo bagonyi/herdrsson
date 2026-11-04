@@ -400,6 +400,9 @@ impl App {
         crate::detect::manifest::background_shells::set_count_as_working(
             config.advanced.claude_background_shells_working,
         );
+        crate::detect::manifest::background_shells::set_ignore_list(
+            &config.advanced.claude_background_shells_ignore,
+        );
         let (event_tx, event_rx) = mpsc::channel::<AppEvent>(APP_EVENT_CHANNEL_CAPACITY);
         let render_notify = Arc::new(Notify::new());
         let render_dirty = Arc::new(crate::render_signal::RenderSignal::new());
@@ -982,10 +985,17 @@ impl App {
 
         if !invalid_section("advanced") {
             self.state.pane_scrollback_limit_bytes = config.advanced.scrollback_limit_bytes;
-            // Fork: idle agents pick it up at their next screen change.
+            // Fork: see detect/manifest/background_shells.rs. Idle agents re-read their state,
+            // so the change applies to them at once.
             crate::detect::manifest::background_shells::set_count_as_working(
                 config.advanced.claude_background_shells_working,
             );
+            crate::detect::manifest::background_shells::set_ignore_list(
+                &config.advanced.claude_background_shells_ignore,
+            );
+            for runtime in self.terminal_runtimes.values() {
+                runtime.reread_agent_state();
+            }
         }
 
         if !invalid_section("update") {

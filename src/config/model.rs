@@ -1094,6 +1094,20 @@ pub struct AdvancedConfig {
     /// Fork: count an idle Claude agent as working while its footer shows a background shell
     /// still running (`· 1 shell`). Default: false, as in stock Herdr.
     pub claude_background_shells_working: bool,
+    /// Fork: background shells running these commands don't count as work. Default: none.
+    pub claude_background_shells_ignore: Vec<BackgroundShellsIgnoreConfig>,
+}
+
+/// Fork: one `[[advanced.claude_background_shells_ignore]]` entry. An unknown key only warns, as
+/// elsewhere in the config, rather than failing it all at startup.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct BackgroundShellsIgnoreConfig {
+    /// Only for Claude agents started in this folder (absolute or `~/…`) or below; everywhere
+    /// without one.
+    pub folder: Option<String>,
+    /// Commands a background shell runs: one of its commands starts with these words.
+    pub commands: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1374,6 +1388,7 @@ impl Default for AdvancedConfig {
         Self {
             scrollback_limit_bytes: DEFAULT_SCROLLBACK_LIMIT_BYTES,
             claude_background_shells_working: false,
+            claude_background_shells_ignore: Vec::new(),
         }
     }
 }
@@ -1446,6 +1461,50 @@ shell_mode = "non_login"
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.terminal.default_shell, "nu");
         assert_eq!(config.terminal.shell_mode, ShellModeConfig::NonLogin);
+    }
+
+    #[test]
+    fn claude_background_shells_ignore_parses() {
+        assert!(Config::default()
+            .advanced
+            .claude_background_shells_ignore
+            .is_empty());
+        let config: Config = toml::from_str(
+            r#"
+[[advanced.claude_background_shells_ignore]]
+commands = ["npm run dev"]
+
+[[advanced.claude_background_shells_ignore]]
+folder = "~/Code/web"
+commands = ["cargo watch", "tail -f"]
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.advanced.claude_background_shells_ignore,
+            vec![
+                BackgroundShellsIgnoreConfig {
+                    folder: None,
+                    commands: vec!["npm run dev".into()],
+                },
+                BackgroundShellsIgnoreConfig {
+                    folder: Some("~/Code/web".into()),
+                    commands: vec!["cargo watch".into(), "tail -f".into()],
+                },
+            ]
+        );
+        // A misspelt key leaves an entry without commands instead of failing the config.
+        let config: Config = toml::from_str(
+            r#"
+[[advanced.claude_background_shells_ignore]]
+command = ["npm run dev"]
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.advanced.claude_background_shells_ignore,
+            vec![BackgroundShellsIgnoreConfig::default()]
+        );
     }
 
     #[test]

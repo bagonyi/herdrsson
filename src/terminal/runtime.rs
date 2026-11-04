@@ -238,6 +238,11 @@ impl TerminalRuntime {
         self.0.reset_agent_detection();
     }
 
+    /// Fork: see `PaneRuntime::reread_agent_state`.
+    pub fn reread_agent_state(&self) {
+        self.0.reread_agent_state();
+    }
+
     #[cfg(test)]
     pub(crate) fn agent_detection_reset_notify_for_test(
         &self,

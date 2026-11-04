@@ -142,6 +142,17 @@ and the pill in the agents panel's title is Claude's weekly usage, from a script
   Herdr stopped counting background shells as work
   ([#3468](https://github.com/herdrdev/herdr/pull/3468)); stock Herdr counts such an agent as
   idle.
+- `claude_background_shells_ignore` lists commands whose background shells don't count as work,
+  such as dev servers and watchers: everywhere, or only for Claude agents started in a given
+  folder or below. A shell matches when one of its commands starts with the listed words, after
+  any `VAR=value`, `nohup`, `env` and the like, and with its program's folder left out: `npm run
+  dev` matches `cd web && PORT=3001 npm run dev > dev.log`, but not `npm run devtools` or
+  `npx concurrently "npm run dev" "npx playwright test"`. Herdr reads each shell's command from
+  Claude's child processes, only on Linux and macOS, and a shell whose command it can't read
+  counts as work. Claude's monitors run the same way, so each monitor the footer shows is taken
+  to be one of the ignored shells: a monitor tailing a job's log can't hide the job. A config
+  reload applies at once. `herdr agent explain` lists an agent's background shells and the entry
+  each one matched.
 - The agents panel can be hidden, giving the spaces list the whole sidebar.
 - The agents panel's title shows how many agents it lists, `agents · 24`, counting only those a
   plugin's agent view shows, then how many are blocked, done, working and idle, `· ● 2  ● 3  ○ 19`, in
@@ -272,7 +283,7 @@ and the pill in the agents panel's title is Claude's weekly usage, from a script
 
 ## settings
 
-Eleven settings are new; all go in `~/.config/herdr/config.toml`:
+Twelve settings are new; all go in `~/.config/herdr/config.toml`:
 
 ```toml
 [ui]
@@ -318,6 +329,16 @@ zen_wider = "ctrl+shift+l"
 # An idle Claude agent counts as working while its footer shows a background shell still
 # running (`· 1 shell`). Default: false, as in stock Herdr.
 claude_background_shells_working = true
+
+# Background shells running these commands don't count as work: one of the shell's commands
+# starts with these words. Without `folder` everywhere, with it only for Claude agents started in
+# that folder (absolute or `~/…`) or below. Linux and macOS only. Default: none.
+[[advanced.claude_background_shells_ignore]]
+commands = ["npm run dev", "cargo watch", "python3 -m http.server"]
+
+[[advanced.claude_background_shells_ignore]]
+folder = "~/Code/web"
+commands = ["hugo server"]
 ```
 
 Herdr has no key for moving spaces up and down. Its socket API can (`workspace.move_block`), so

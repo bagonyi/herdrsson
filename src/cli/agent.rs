@@ -169,6 +169,37 @@ fn agent_explain(args: &[String]) -> std::io::Result<i32> {
     Ok(0)
 }
 
+/// Fork: a Claude agent's background shells and the ignore list commands they matched (see
+/// detect/manifest/background_shells.rs).
+fn print_background_shells(explain: &serde_json::Value) {
+    let shells = &explain["background_shells"];
+    if !shells.is_object() {
+        return;
+    }
+    let monitors = shells["monitors"].as_u64().unwrap_or(0);
+    println!(
+        "background_shells: {}{} ({} ignored)",
+        shells["count"].as_u64().unwrap_or(0),
+        if monitors > 0 {
+            format!(", monitors: {monitors}")
+        } else {
+            String::new()
+        },
+        shells["ignored"].as_u64().unwrap_or(0),
+    );
+    for shell in shells["shells"].as_array().into_iter().flatten() {
+        let Some(command) = shell["command"].as_str() else {
+            println!("  (command not readable)");
+            continue;
+        };
+        let command = command.split_whitespace().collect::<Vec<_>>().join(" ");
+        match shell["ignored_by"].as_str() {
+            Some(ignored_by) => println!("  {command}  (ignored: {ignored_by})"),
+            None => println!("  {command}"),
+        }
+    }
+}
+
 fn print_agent_explain_text(explain: &serde_json::Value, verbose: bool) {
     println!("agent: {}", explain["agent"].as_str().unwrap_or("unknown"));
     println!("state: {}", explain["state"].as_str().unwrap_or("unknown"));
@@ -210,6 +241,7 @@ fn print_agent_explain_text(explain: &serde_json::Value, verbose: bool) {
     if let Some(warning) = explain["warning"].as_str() {
         println!("warning: {warning}");
     }
+    print_background_shells(explain);
 
     if !verbose {
         return;

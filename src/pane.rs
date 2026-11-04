@@ -360,6 +360,40 @@ async fn publish_background_shells(
     }
 }
 
+/// Fork: an idle Claude agent with a background shell still running counts as working (see
+/// detect/manifest/background_shells.rs).
+fn count_background_shells_as_working(
+    detection: Option<crate::detect::AgentDetection>,
+    agent: Option<Agent>,
+    content: &str,
+    process_exited: bool,
+    agent_job: &AgentJobTracker,
+) -> Option<crate::detect::AgentDetection> {
+    if process_exited {
+        return detection;
+    }
+    detection.map(|detection| {
+        crate::detect::manifest::background_shells::count_as_working(
+            detection,
+            agent,
+            content,
+            agent_job.agent_pid(),
+        )
+    })
+}
+
+/// Fork: the pid of the agent in front in the pane whose shell is `shell_pid`, for
+/// `herdr agent explain`.
+pub(crate) fn foreground_agent_pid(shell_pid: u32, agent: Agent) -> Option<u32> {
+    let probe = probe_foreground_process(
+        shell_pid,
+        crate::detect::foreground_process_group_id(shell_pid),
+    );
+    (probe.agent == Some(agent))
+        .then_some(probe.agent_pid)
+        .flatten()
+}
+
 #[derive(Debug, Clone, Copy)]
 struct AgentDetectionPublishUpdate {
     state: AgentState,
@@ -1212,6 +1246,13 @@ fn spawn_basic_detection_task(
                 &osc_title,
                 &osc_progress,
                 process_exited,
+            );
+            let screen_detection = count_background_shells_as_working(
+                screen_detection,
+                agent,
+                content,
+                process_exited,
+                &agent_job,
             );
             publish_codex_prompt_observation(
                 &state_events,
@@ -3231,6 +3272,13 @@ impl PaneRuntime {
                         &osc_progress,
                         process_exited,
                     );
+                    let screen_detection = count_background_shells_as_working(
+                        screen_detection,
+                        agent,
+                        content,
+                        process_exited,
+                        &agent_job,
+                    );
                     publish_codex_prompt_observation(
                         &state_events,
                         pane_id,
@@ -3354,6 +3402,12 @@ impl PaneRuntime {
 
     pub fn reset_agent_detection(&self) {
         self.detect_reset_notify.notify_one();
+    }
+
+    /// Fork: re-read the screen for agent state once, keeping what's known about the agent, so a
+    /// reloaded config applies to an idle agent at once.
+    pub fn reread_agent_state(&self) {
+        mark_detection_content_changed(&self.detection_content_seq);
     }
 
     #[cfg(test)]

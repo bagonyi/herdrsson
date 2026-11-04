@@ -773,6 +773,31 @@ fn process_argv(pid: u32) -> Option<Vec<String>> {
     (!parts.is_empty()).then_some(parts)
 }
 
+/// Fork: the argv of each direct child process of `pid` that is a shell (Claude's background
+/// shells and monitors). Other children, such as MCP servers, aren't read.
+pub fn child_shell_argvs(pid: u32) -> Vec<Vec<String>> {
+    if pid == 0 {
+        return Vec::new();
+    }
+    let mut budget = ForegroundScanBudget::for_probe();
+    let mut children = Vec::new();
+    for tid in process_task_ids(pid, &mut budget) {
+        children.extend(process_task_children(pid, tid, &mut budget));
+    }
+    children.sort_unstable();
+    children.dedup();
+    children
+        .into_iter()
+        .filter(|child| {
+            process_pgrp_comm_and_state(*child).is_some_and(|(_, comm, state)| {
+                super::is_pane_shell_process_name(&comm)
+                    && process_allows_remote_memory_read(state, &comm, running_inside_wsl())
+            })
+        })
+        .filter_map(process_argv)
+        .collect()
+}
+
 /// Get the current working directory of a process.
 /// Uses /proc/<pid>/cwd symlink.
 pub fn process_cwd(pid: u32) -> Option<PathBuf> {

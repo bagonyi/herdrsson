@@ -1134,6 +1134,47 @@ pub fn session_processes(child_pid: u32) -> Vec<u32> {
         .collect()
 }
 
+/// Fork: the argv of each direct child process of `pid` that is a shell (Claude's background
+/// shells and monitors). Other children, such as MCP servers, aren't read.
+pub fn child_shell_argvs(pid: u32) -> Vec<Vec<String>> {
+    child_pids(pid)
+        .into_iter()
+        .filter(|child| {
+            process_name_and_parent(*child)
+                .is_some_and(|(name, _)| super::is_pane_shell_process_name(&name))
+        })
+        .filter_map(process_argv)
+        .collect()
+}
+
+fn child_pids(pid: u32) -> Vec<u32> {
+    if pid == 0 {
+        return Vec::new();
+    }
+    let mut capacity = 64;
+    for _ in 0..6 {
+        let mut pids = vec![0 as libc::pid_t; capacity];
+        // libproc returns a pid count, though its header speaks of bytes; either way the
+        // unused slots stay 0 and are dropped.
+        let count = unsafe {
+            libc::proc_listchildpids(
+                pid as libc::pid_t,
+                pids.as_mut_ptr() as *mut libc::c_void,
+                (pids.len() * std::mem::size_of::<libc::pid_t>()) as libc::c_int,
+            )
+        };
+        if count <= 0 {
+            return Vec::new();
+        }
+        let count = count as usize;
+        if count < capacity {
+            return collect_positive_pids(pids, count);
+        }
+        capacity = capacity.saturating_mul(2);
+    }
+    Vec::new()
+}
+
 fn all_pids() -> Vec<u32> {
     let initial_count = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
     let mut capacity = if initial_count > 0 {
