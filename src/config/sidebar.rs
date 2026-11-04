@@ -135,7 +135,8 @@ impl SidebarTokenSeparator {
 /// Fork: `ago` shows a custom token holding a Unix time in seconds as the time since then,
 /// e.g. `5m ago`, and `left` as the time until then, e.g. `5m left`; `bar` shows one holding
 /// `FROM/UNTIL` as the share of that time still left, e.g. `▰▰▰▰▱▱`, and `bar_left` that bar
-/// with the time left after it, e.g. `▰▰▰▰▱▱ 38m` (see `crate::ui::sidebar::ago`).
+/// with the time left after it, e.g. `▰▰▰▰▱▱ 38m`; `time_left` shows just that time, e.g. `38m`
+/// (see `crate::ui::sidebar::ago`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SidebarTokenFormat {
@@ -144,6 +145,8 @@ pub enum SidebarTokenFormat {
     Bar,
     #[serde(rename = "bar_left")]
     BarLeft,
+    #[serde(rename = "time_left")]
+    TimeLeft,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

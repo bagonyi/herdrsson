@@ -181,6 +181,10 @@ and the pill in the agents panel's title is Claude's weekly usage, from a script
   `▰▰▰▱▱▱ 28m`, and `▰▱▱▱▱▱ 4m` where the bar alone only says "under 10 minutes". Once the time
   is over it shows just the empty bar, so a rule can match it: `{ starts_with = "▰▱▱▱▱▱", ... }`
   for the last segment, `{ equals = "▱▱▱▱▱▱", ... }` once expired.
+- `format = "time_left"` shows just the time left, in the steps of `left`: `28m`, and `0s` in its
+  last 10 seconds and once it's over, e.g. Claude Cache Timer's `$cache_until` without a bar.
+  Numeric rules (`gt`, `lt`) read such a time as its seconds, so `{ lt = 600, fg = "#ff9e64" }`
+  matches its last 10 minutes and `{ equals = "0s", text = "expired" }` the end.
 - A rule can show other text in its token's place, `text = "..."`:
   `{ equals = "▱▱▱▱▱▱", text = "▱▱▱▱▱▱ expired" }` says the cache has expired next to its empty
   bar.

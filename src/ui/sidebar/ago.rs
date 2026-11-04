@@ -4,7 +4,9 @@
 //! (`show_working`). `format = "left"` counts down to such a time instead: `5m left`, and
 //! `0s left` in its last 10 seconds and once it has passed. `format = "bar"` shows a value of two such times,
 //! `FROM/UNTIL`, as the share of the time between them still left: `▰▰▰▰▱▱`, and `format =
-//! "bar_left"` that bar with the time left after it: `▰▰▰▰▱▱ 38m`. The client repaints each
+//! "bar_left"` that bar with the time left after it: `▰▰▰▰▱▱ 38m`. `format = "time_left"` shows
+//! just that time, `38m`, and `0s` like `left`; numeric rules read it as seconds
+//! (`config::sidebar::rules`), so `lt = 600` matches its last 10 minutes. The client repaints each
 //! second while a row uses any of them (`ClientShellState::tick_ago`), or while
 //! `[ui.sidebar.agents.older]` is set, as agents turn older with time (`agent_is_older`).
 
@@ -31,6 +33,9 @@ pub(super) fn custom_value(value: &str, format: Option<SidebarTokenFormat>) -> S
         Some(SidebarTokenFormat::BarLeft) => {
             bar_left(value, unix_now()).unwrap_or_else(|| value.to_string())
         }
+        Some(SidebarTokenFormat::TimeLeft) => {
+            time_left(value, unix_now()).unwrap_or_else(|| value.to_string())
+        }
         None => value.to_string(),
     }
 }
@@ -52,6 +57,12 @@ fn ago(value: &str, now: u64) -> Option<String> {
 fn left(value: &str, now: u64) -> Option<String> {
     let seconds = value.parse::<u64>().ok()?.saturating_sub(now);
     Some(format!("{} left", duration(seconds)))
+}
+
+/// `left` without the word: `58m`, and `0s` in its last 10 seconds and once it has passed.
+fn time_left(value: &str, now: u64) -> Option<String> {
+    let seconds = value.parse::<u64>().ok()?.saturating_sub(now);
+    Some(duration(seconds))
 }
 
 /// A `bar`'s segments.
@@ -146,7 +157,7 @@ fn new_second(last_second: &mut u64, now: u64) -> bool {
     std::mem::replace(last_second, now) != now
 }
 
-/// Whether an agent or space row shows a token as `ago`, `left`, `bar` or `bar_left`, or
+/// Whether an agent or space row shows a token as `ago`, `left`, `bar`, `bar_left` or `time_left`, or
 /// older agents look different, so the sidebar changes as time passes.
 fn sidebar_uses_ago(agents: &AgentsSidebarConfig, spaces: &SpacesSidebarConfig) -> bool {
     let agent_rows = agents
@@ -232,6 +243,21 @@ mod tests {
         assert_eq!(
             left(&(now - 30).to_string(), now).as_deref(),
             Some("0s left")
+        );
+    }
+
+    #[test]
+    fn time_left_is_left_without_the_word() {
+        let now = 10_000_000;
+        for (until, text) in [(9, "0s"), (59, "50s"), (3_599, "59m"), (3_600, "1h")] {
+            assert_eq!(
+                time_left(&(now + until).to_string(), now).as_deref(),
+                Some(text)
+            );
+        }
+        assert_eq!(
+            time_left(&(now - 30).to_string(), now).as_deref(),
+            Some("0s")
         );
     }
 
