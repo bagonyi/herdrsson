@@ -209,9 +209,10 @@ and the pill in the agents panel's title is Claude's weekly usage, from a script
   `{ token = "$cache_pings", separator = "space" }` puts Claude Cache Timer's `↻ 5` right after
   the bar's time, `▰▰▰▱▱▱ 28m ↻ 5`.
 - A sidebar token can show text before its value whenever it shows, `prefix = "..."` (up to 16
-  characters), e.g. an icon: `{ token = "$subagents", prefix = "󰚩 " }` shows Claude Subagents'
-  count as `󰚩 2`. Rules and `fg_scale` still read the value without it, and a rule's `text` gets
-  it too; a `format = "ago"` token shows `working` without it while its agent works.
+  characters), e.g. an icon: `{ token = "$subagents", prefix = "󰚩 " }` shows
+  [Claude Subagents](https://github.com/bagonyi/herdr-claude-subagents)' count as `󰚩 2`. Rules
+  and `fg_scale` still read the value without it, and a rule's `text` gets it too; a
+  `format = "ago"` token shows `working` without it while its agent works.
 - Agents not active for a while can look different, to tell them at a glance from the ones you
   are working with. Under `[ui.sidebar.agents.older]`, an agent counts as older once
   `after_minutes` have passed since the Unix time in its `token`, e.g. Agent Recency's
