@@ -173,6 +173,10 @@ through `title_command`.
   exits. The text is tinted towards the accent colour while the mouse is over it and while its
   popup is open (underlined in a theme of terminal colours). A mistake in `popup` only costs the
   click, with a warning, not the whole config.
+
+  <img src="assets/usage-popup.png" width="464" alt="The agents panel's title pill, 7d 81% · 22h, with a popup titled Claude usage hanging from it: this week's usage at 81% with a bar, when it resets and the pace it's on, the week's Fable limit at 21%, where the usage went, extra usage off, the plan and the time of the figures, and r to refresh, q to close">
+
+  This one is Claude's usage, as Claude Code's `/usage` shows it, from a script of mine.
 - The agents panel's title can leave out the sort label (`grouped`, `priority` or a plugin's
   agent view's, such as `recent`), and with it the click that switches the order
   (`sort_label = false`); a title command's text then ends a column from the edge.
