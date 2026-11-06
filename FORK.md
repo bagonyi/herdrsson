@@ -444,6 +444,10 @@ uses the Herdr number.
 - 2026.11.04.2 (on Herdr 0.9.5): a Claude agent's background shells show in its row as
   `$shells`, and with `claude_background_shells_working` an idle Claude waiting on one counts as
   working.
+- 2026.11.06 (on Herdr 0.9.5): `format = "time_left"` shows just the time left, and rules can
+  compare times. Background shells running commands on a list, such as dev servers, don't keep a
+  Claude agent working. A sidebar token can show a `prefix`, such as an icon, and `$shells` is
+  just the count.
 
 ## caveats
 
