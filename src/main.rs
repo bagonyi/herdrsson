@@ -170,6 +170,7 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # previous_tab = "prefix+p"
 # next_tab = "prefix+n"
 # last_tab = ""           # optional, unset by default; back and forth between a space's two latest tabs
+# flag_tab = ""           # optional, unset by default; flags the tab with ⚑ to come back to, or unflags it
 # move_tab_previous = ""   # optional, e.g. "alt+shift+left" moves the tab toward the front
 # move_tab_next = ""       # optional, e.g. "alt+shift+right" moves the tab toward the back
 # switch_tab = "prefix+1..9"

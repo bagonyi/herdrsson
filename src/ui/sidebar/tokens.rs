@@ -22,6 +22,9 @@ pub(crate) enum ResolvedTokenKind {
     Branch(String),
     GitStatus { ahead: usize, behind: usize },
     Custom(String),
+    // Fork: a mark (its text) in its own colour, e.g. a tab's status dot before its name. A
+    // line comment and a tuple keep rustfmt from reflowing GitStatus above.
+    Mark(&'static str, ratatui::style::Color),
 }
 
 impl ResolvedTokenKind {
@@ -36,7 +39,7 @@ impl ResolvedTokenKind {
             | Self::TerminalTitle(value)
             | Self::Branch(value)
             | Self::Custom(value) => Some(value),
-            Self::StateIcon | Self::GitStatus { .. } => None,
+            Self::StateIcon | Self::GitStatus { .. } | Self::Mark(..) => None,
         }
     }
 
@@ -52,7 +55,7 @@ impl ResolvedTokenKind {
             | Self::TerminalTitle(value)
             | Self::Branch(value)
             | Self::Custom(value) => *value = text.to_string(),
-            Self::StateIcon | Self::GitStatus { .. } => {}
+            Self::StateIcon | Self::GitStatus { .. } | Self::Mark(..) => {}
         }
     }
 
@@ -68,7 +71,7 @@ impl ResolvedTokenKind {
             | Self::TerminalTitle(value)
             | Self::Branch(value)
             | Self::Custom(value) => value.insert_str(0, prefix),
-            Self::StateIcon | Self::GitStatus { .. } => {}
+            Self::StateIcon | Self::GitStatus { .. } | Self::Mark(..) => {}
         }
     }
 }
@@ -227,13 +230,40 @@ pub(crate) fn space_rows(
         .collect()
 }
 
+/// Fork: puts `text` in `fg` before each row's `tab` token, which then follows it after a
+/// space, as a name follows the state icon. The separator before the tab goes before the mark.
+pub(crate) fn mark_tab(
+    rows: &mut [Vec<ResolvedToken>],
+    text: &'static str,
+    fg: ratatui::style::Color,
+) {
+    for row in rows {
+        let Some(index) = row
+            .iter()
+            .position(|token| matches!(token.kind, ResolvedTokenKind::Tab(_)))
+        else {
+            continue;
+        };
+        let style = SidebarTokenStyle {
+            separator: row[index].style.separator.take(),
+            ..SidebarTokenStyle::default()
+        };
+        row.insert(
+            index,
+            ResolvedToken::new(ResolvedTokenKind::Mark(text, fg), style),
+        );
+    }
+}
+
 pub(crate) fn separator(previous: &ResolvedToken, current: &ResolvedToken) -> &'static str {
     // Fork: a token's own `separator` comes first.
     if let Some(separator) = current.style.separator {
         return separator.text();
     }
-    if matches!(previous.kind, ResolvedTokenKind::StateIcon)
-        || matches!(current.kind, ResolvedTokenKind::GitStatus { .. })
+    if matches!(
+        previous.kind,
+        ResolvedTokenKind::StateIcon | ResolvedTokenKind::Mark(..)
+    ) || matches!(current.kind, ResolvedTokenKind::GitStatus { .. })
     {
         " "
     } else {
@@ -531,6 +561,93 @@ rows = [[{ token = "$size", fg_scale = [{ at = 0, fg = "#000000" }, { at = 1_000
                 toml::from_str::<AgentsSidebarConfig>(invalid).is_err(),
                 "{invalid}"
             );
+        }
+    }
+
+    #[test]
+    fn a_tab_mark_goes_before_the_tab_and_takes_its_separator() {
+        let config: AgentsSidebarConfig = toml::from_str(
+            r##"rows = [["workspace", { token = "tab", separator = "none" }], ["agent"]]"##,
+        )
+        .unwrap();
+        let mut entry = entry();
+        entry.tab = Some("review".into());
+        let mut rows = agent_rows(&config, context(&entry), "working");
+        mark_tab(&mut rows, "●", ratatui::style::Color::Red);
+        assert_eq!(
+            rows[0]
+                .iter()
+                .map(|token| token.kind.clone())
+                .collect::<Vec<_>>(),
+            [
+                ResolvedTokenKind::Workspace("repo".into()),
+                ResolvedTokenKind::Mark("●", ratatui::style::Color::Red),
+                ResolvedTokenKind::Tab("review".into()),
+            ]
+        );
+        assert_eq!(separator(&rows[0][0], &rows[0][1]), "", "the tab's own");
+        assert_eq!(separator(&rows[0][1], &rows[0][2]), " ");
+        assert_eq!(
+            rows[1],
+            [ResolvedToken::unstyled(ResolvedTokenKind::Agent(
+                "pi".into()
+            ))],
+            "a row without the tab gets no mark"
+        );
+    }
+
+    #[test]
+    fn tab_marks_go_when_a_narrow_row_leaves_their_tab_out() {
+        use ratatui::style::{Color, Style};
+        for separator in ["", r#", separator = "none""#, r#", separator = "space""#] {
+            let config: AgentsSidebarConfig = toml::from_str(&format!(
+                r#"rows = [["state_icon", "workspace", {{ token = "tab"{separator} }}, "$x", "$y"]]"#
+            ))
+            .unwrap();
+            let mut entry = entry();
+            entry.tab = Some("review".into());
+            entry.tokens.insert("x".into(), "claude".into());
+            entry.tokens.insert("y".into(), "12m".into());
+            // A status mark alone, then a status mark and a flag, as the client adds them.
+            for marks in [&[Color::Red][..], &[Color::Red, Color::Magenta]] {
+                let mut rows = agent_rows(&config, context(&entry), "working");
+                for colour in marks {
+                    mark_tab(&mut rows, "●", *colour);
+                }
+                let mut tab_left_out = 0;
+                for width in 1..=40 {
+                    // The tab is the only token drawn in blue.
+                    let spans = super::super::resolved_token_spans(
+                        &rows[0],
+                        ("○", Style::default()),
+                        Style::default(),
+                        Style::default(),
+                        Style::default().fg(Color::Blue),
+                        Style::default(),
+                        &super::super::Palette::catppuccin(),
+                        width,
+                    );
+                    let drawn = spans
+                        .iter()
+                        .map(|span| unicode_width::UnicodeWidthStr::width(span.content.as_ref()))
+                        .sum::<usize>();
+                    assert!(
+                        drawn <= width,
+                        "{separator:?} {marks:?}: {drawn} columns at width {width}: {spans:?}"
+                    );
+                    let has = |colour| spans.iter().any(|span| span.style.fg == Some(colour));
+                    if !has(Color::Blue) {
+                        tab_left_out += 1;
+                    }
+                    for colour in marks {
+                        assert!(
+                            !has(*colour) || has(Color::Blue),
+                            "{separator:?} {marks:?}: a mark without its tab at width {width}: {spans:?}"
+                        );
+                    }
+                }
+                assert!(tab_left_out > 0, "some widths are too narrow for the tab");
+            }
         }
     }
 

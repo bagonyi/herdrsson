@@ -456,7 +456,8 @@ pub(super) fn agent_row(
         .count();
     let tab_label = tab
         .filter(|tab| tab_count > 1 || tab.custom_label)
-        .map(|tab| tab.label.as_str());
+        // Fork: its flag is drawn as a mark (below).
+        .map(|tab| super::tab_flag::unflagged(&tab.label));
     let agent_label = agent
         .display_agent
         .as_deref()
@@ -501,6 +502,10 @@ pub(super) fn agent_row(
     // Fork: a working agent shows `working` in place of its `ago` times.
     if working {
         crate::ui::sidebar_show_working(&mut rows);
+    }
+    // Fork: the tab's marks before its name, as in the tab bar.
+    for (mark, colour) in tab.map_or_else(Vec::new, |tab| super::render::tab_marks(tab, config)) {
+        crate::ui::sidebar_mark_tab(&mut rows, mark, colour);
     }
     Some(AgentRow {
         pane_id: agent.pane_id.clone(),

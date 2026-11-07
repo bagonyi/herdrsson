@@ -1497,6 +1497,9 @@ impl ClientShellState {
                             || left.workspace_id != right.workspace_id
                             || left.label != right.label
                             || left.zoomed != right.zoomed
+                            // Fork: a status mark widens its tab, as a longer name does.
+                            || render::tab_has_status_mark(left)
+                                != render::tab_has_status_mark(right)
                     })
                 || render::tab_bar_status_width(current) != render::tab_bar_status_width(&snapshot)
         });

@@ -28,10 +28,11 @@ space's name. If Herdr ever gets groups of its own, this fork will drop these an
 ![Herdrsson with its spaces in the groups Acme, Blog and a folded Oss, red counts of waiting agents, the agents counted by status and Claude's weekly usage in the agents panel's title, and the agents panel listed by last activity, each agent on three lines with the time since then, its context's size, its prompt cache's time left and, for three of them, a robot icon with the number of subagents at work and a prompt icon with the number of background shells, the two idle for hours on one line each under an earlier line, next to a real Claude whose status line shows the same size and time left as its row](assets/fork-screenshot.png)
 
 The groups `Acme` and `Blog` are open and `Oss` is folded, its header counting the agent waiting
-in one of its spaces. Four separate Herdr plugins add most of the rest:
-[Tab Status](https://github.com/bagonyi/herdr-tab-status) puts the 🟢 ⏳ 🟠 markers in front of
-tab names, [Agent Recency](https://github.com/bagonyi/herdr-agent-recency) lists the agents
-panel by each agent's last activity, which this fork shows as `3m ago`,
+in one of its spaces. The 🟢 ⏳ 🟠 in front of the tab names came from the Tab Status plugin,
+which this fork has since replaced with coloured status dots (see [tabs](#tabs)). Three
+separate Herdr plugins add most of the rest:
+[Agent Recency](https://github.com/bagonyi/herdr-agent-recency) lists the agents panel by each
+agent's last activity, which this fork shows as `3m ago`,
 [Claude Cache Timer](https://github.com/bagonyi/herdr-claude-cache-timer) adds each Claude agent's
 context size, green to red, and its prompt cache's time left, orange in the last 10 minutes, and
 [Claude Subagents](https://github.com/bagonyi/herdr-claude-subagents) the robot with how many
@@ -96,13 +97,13 @@ through `title_command`.
 - A finished agent counts as looked at only once its pane has stayed on screen in the focused
   window for a second (the `seen_delay_ms` setting). Skipping past its tab on the way to another,
   or switching windows sooner, leaves it waiting for you: its red count, the tab bar's arrows and
-  Tab Status's 🟢 stay. An agent's question keeps its red count the same way. Stock Herdr counts
+  its tab's dot stay. An agent's question keeps its red count the same way. Stock Herdr counts
   both as looked at the moment their tab shows. An agent that finishes while its pane is on
   screen in the focused window still counts as looked at straight away.
 - A finished agent no one has looked at yet gets a green frame on its pane wherever the pane
   shows: for the second before it counts as looked at, or for as long as a window in the
   background shows it. The frame goes when the agent counts as looked at or starts working
-  again; the red count, Tab Status's 🟢 and the API's `done` go with it. A pane's border turns
+  again; the red count, its tab's dot and the API's `done` go with it. A pane's border turns
   green; a pane without a border (a lone pane, by default) gets the frame drawn over its
   outermost cells, so the program in it isn't resized.
 - A pane hidden behind its tab's zoom, as in zen mode, isn't on screen: its finished agent waits
@@ -114,7 +115,7 @@ through `title_command`.
 - While no window is attached, and on a server no window has attached to yet, an agent that
   finishes in the tab last on screen counts as unseen until you look at it. Stock Herdr counts
   that tab as looked at. When a window comes back and its tab's agents count as looked at,
-  plugins hear about it as they would on a tab switch, so Tab Status catches up.
+  plugins hear about it as they would on a tab switch, so they catch up.
 - A window you open counts agents that finished while no window was looking, and any open
   questions, so closing and reopening it doesn't reset the counts.
 - When the tab bar is too narrow for every tab, its < and > arrows show which way to look. An
@@ -138,7 +139,7 @@ through `title_command`.
   (`⏵⏵ auto mode on · 2 shells`), so the token comes and goes with them.
 - With `claude_background_shells_working`, an idle Claude agent counts as working while one of its
   background shells is still running. Claude can start a long job, end its turn and be woken
-  when the job finishes, and its tab stays ⏳ until then instead of showing done halfway. Only
+  when the job finishes, and its tab shows working until then instead of done halfway. Only
   an idle reading changes, so a question or permission prompt still reads blocked. A shell that
   never ends, such as a dev server, keeps the agent working until you stop it, which is why
   Herdr stopped counting background shells as work
@@ -227,9 +228,6 @@ through `title_command`.
   have three, and where they come last after at least one other agent, as in Agent Recency's
   order, a line marks where they start: `──── earlier ────` with `divider = "earlier"`, a bare
   line with `divider = ""`. A typo in the section is warned about and ignored, as elsewhere.
-- Notifications leave out the 🟢 ⏳ 🟠 marker that [Tab Status](https://github.com/bagonyi/herdr-tab-status)
-  puts in front of a tab's name. The plugin changes it only after the notification is made, so a
-  "finished" notification would still show ⏳.
 - After a server restart, agents come back latest first: the Claude conversation with the newest
   message starts first, and agents without one follow in sidebar order. With
   `startup_per_agent_delay_ms` set to a few seconds, the agents you were using are back in
@@ -256,6 +254,17 @@ through `title_command`.
 - The server does it as `tab.move_to_workspace` (`tab_id`, `workspace_id`, `focus`). As after
   `herdr pane move`, the tab's panes get IDs in their new space and the old IDs keep working. A
   server started before this version says it doesn't support the move yet; restart it.
+- A tab whose agents are working, blocked or done shows it in front of its name, in the tab bar
+  and before the `tab` token in the agents panel's rows: the agents panel's own `●` in the same
+  colour (◐ × ✓ with `status_indicators = "symbols"`), from the same status, so it matches their
+  rows. A row's tab mark is its tab's most urgent status, which can be another agent's. Idle tabs
+  show none. Stock Herdr shows agents' status only in the sidebar.
+- `keys.flag_tab` (unset by default, e.g. `"cmd+shift+f"`) flags the tab in front of you to come
+  back to, or takes the flag off: `⚑ ` goes at the start of its name, so the flag survives
+  restarts and Go to and the CLI show it too. The tab bar and the agents panel draw it in red
+  after the tab's status mark: `● ⚑ review`. As after any rename, an unnamed tab that was flagged
+  keeps its number as its name once the flag comes off.
+- These two replace our former Tab Status plugin, which put 🟢 ⏳ 🔴 and 🚩 emoji in tab names.
 
 ### keys
 
@@ -294,7 +303,7 @@ through `title_command`.
 
 ## settings
 
-Twelve settings are new; all go in `~/.config/herdr/config.toml`:
+Thirteen settings are new; all go in `~/.config/herdr/config.toml`:
 
 ```toml
 [ui]
@@ -330,6 +339,8 @@ rows = [["state_icon", "workspace", "tab", { token = "$last_at", format = "ago" 
 # Back and forth between a space's two latest tabs, and between the two latest spaces.
 last_tab = "alt+q"
 last_workspace = "alt+w"
+# Flags the focused tab with ⚑ to come back to, or takes the flag off.
+flag_tab = "cmd+shift+f"
 # The focused pane alone, centred, until pressed again.
 zen_mode = "prefix+shift+z"
 # Narrower and wider, only in zen mode; outside it these keys reach the pane.
@@ -358,10 +369,9 @@ group, by keyboard.
 
 ## plugins
 
-Four plugins that go well with this fork. All four work with stock Herdr too:
+Four plugins that go well with this fork. All four should work with stock Herdr too (Claude
+Subagents is tested only on this fork so far):
 
-- [Tab Status](https://github.com/bagonyi/herdr-tab-status) puts 🟢 done, ⏳ working or 🟠 blocked
-  in front of tab names.
 - [Restore Commands](https://github.com/bagonyi/herdr-restore-commands) brings back commands such
   as `gh dash` and `lnav` in their panes when a session restarts.
 - [Agent Recency](https://github.com/bagonyi/herdr-agent-recency) lists the agents panel by each
@@ -370,6 +380,9 @@ Four plugins that go well with this fork. All four work with stock Herdr too:
 - [Claude Cache Timer](https://github.com/bagonyi/herdr-claude-cache-timer) shows in the agents
   panel when each Claude agent's prompt cache expires. On this fork it can be a bar, `▰▰▰▰▱▱`,
   that empties as the time passes.
+- [Claude Subagents](https://github.com/bagonyi/herdr-claude-subagents) shows in the agents
+  panel how many agents each Claude agent has at work: its subagents, its teammates and its
+  workflows' agents. On this fork a robot icon can go in front of the number.
 
 ## building
 

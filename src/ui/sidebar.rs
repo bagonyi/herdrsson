@@ -11,6 +11,7 @@ pub(crate) use self::ago::{
     agent_is_older as sidebar_agent_is_older, show_working as sidebar_show_working,
     sidebar_ago_changed,
 };
+pub(crate) use self::tokens::mark_tab as sidebar_mark_tab;
 pub(crate) use self::tokens::{
     agent_rows as sidebar_agent_rows, space_rows as sidebar_space_rows, AgentTokenContext,
     ResolvedToken, ResolvedTokenKind, SpaceTokenContext,
@@ -142,6 +143,8 @@ pub(crate) fn resolved_token_spans(
             | ResolvedTokenKind::TerminalTitle(text)
             | ResolvedTokenKind::Branch(text)
             | ResolvedTokenKind::Custom(text) => display_width(text),
+            // Fork: a mark is left out like a name when the row is too narrow.
+            ResolvedTokenKind::Mark(text, _) => display_width(text),
             _ => 0,
         })
         .collect::<Vec<_>>();
@@ -170,6 +173,13 @@ pub(crate) fn resolved_token_spans(
         }
         for index in (0..resolved.len()).rev() {
             if flexible_widths[index] == 0 {
+                continue;
+            }
+            // Fork: a mark belongs to the token after it (a tab's marks to the tab's name), so
+            // it goes in only with that token, which this loop has already placed.
+            if matches!(resolved[index].kind, ResolvedTokenKind::Mark(..))
+                && !active.get(index + 1).copied().unwrap_or(false)
+            {
                 continue;
             }
             active[index] = true;
@@ -274,6 +284,10 @@ pub(crate) fn resolved_token_spans(
                     apply_token_style(custom_style, token.style),
                 ));
             }
+            ResolvedTokenKind::Mark(text, fg) => spans.push(Span::styled(
+                truncate_end(text, budgets[index]),
+                apply_token_style(Style::default().fg(*fg), token.style),
+            )),
         }
     }
     spans

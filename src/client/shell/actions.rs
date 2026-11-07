@@ -184,6 +184,9 @@ impl ClientShellState {
                 if self.handle_recent_focus(action, outcome) {
                     return;
                 }
+                if self.handle_flag_tab(action, outcome) {
+                    return;
+                }
                 if self.handle_endpoint_navigation(action, outcome) {
                     return;
                 }

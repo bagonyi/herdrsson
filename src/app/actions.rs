@@ -19,8 +19,6 @@ use super::state::{
     ToastKind, ToastNotification, ToastTarget,
 };
 
-mod tab_status_marker;
-
 fn is_background_completion_transition(prev_state: AgentState, new_state: AgentState) -> bool {
     matches!(new_state, AgentState::Idle)
         && matches!(prev_state, AgentState::Working | AgentState::Blocked)
@@ -158,7 +156,6 @@ pub fn notification_context(
     if ws.tabs.len() > 1 {
         if let Some(tab_idx) = ws.find_tab_index_for_pane(pane_id) {
             if let Some(label) = ws.tab_display_name(tab_idx) {
-                let label = tab_status_marker::strip(&label);
                 context.push_str(&format!(" · {label}"));
             }
         }

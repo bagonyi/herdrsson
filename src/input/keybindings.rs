@@ -69,6 +69,7 @@ pub(crate) enum KeybindAction {
     LastPane,
     LastTab,
     LastWorkspace,
+    FlagTab,
     Help,
     Settings,
     ReloadConfig,
@@ -138,6 +139,7 @@ pub(crate) fn resolve_non_indexed_action(
         (&keybinds.swap_pane_right, KeybindAction::SwapPaneRight),
         (&keybinds.last_pane, KeybindAction::LastPane),
         (&keybinds.last_tab, KeybindAction::LastTab),
+        (&keybinds.flag_tab, KeybindAction::FlagTab),
         (&keybinds.last_workspace, KeybindAction::LastWorkspace),
         (&keybinds.cycle_pane_next, KeybindAction::CyclePaneNext),
         (

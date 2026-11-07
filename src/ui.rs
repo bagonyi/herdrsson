@@ -34,9 +34,9 @@ pub(crate) use self::scrollbar::{
 };
 pub(crate) use self::sidebar::{
     agent_panel_entries_from, expanded_sidebar_sections, resolved_token_spans,
-    sidebar_agent_is_older, sidebar_agent_rows, sidebar_ago_changed, sidebar_section_divider_rect,
-    sidebar_show_working, sidebar_space_rows, AgentPanelEntry, AgentTokenContext, ResolvedToken,
-    ResolvedTokenKind, SpaceTokenContext,
+    sidebar_agent_is_older, sidebar_agent_rows, sidebar_ago_changed, sidebar_mark_tab,
+    sidebar_section_divider_rect, sidebar_show_working, sidebar_space_rows, AgentPanelEntry,
+    AgentTokenContext, ResolvedToken, ResolvedTokenKind, SpaceTokenContext,
 };
 use self::status::copy_feedback_rect;
 pub(crate) use self::status::{render_config_diagnostic_buffer, render_copy_feedback_buffer};

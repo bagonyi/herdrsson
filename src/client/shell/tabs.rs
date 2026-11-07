@@ -24,7 +24,7 @@ pub(crate) fn render_tab_bar(
     let desired_widths = tabs
         .iter()
         .map(|tab| {
-            let label = tab_label(tab);
+            let label = tab_label(tab, config);
             display_width(&label).saturating_add(4).max(MIN_TAB_WIDTH)
         })
         .collect::<Vec<_>>();
@@ -91,7 +91,7 @@ pub(crate) fn render_tab_bar(
     let mut last_visible = None;
     let mut clipped_right = None;
     for (index, tab) in tabs.iter().enumerate().skip(*tab_scroll) {
-        let name = tab_label(tab);
+        let name = tab_label(tab, config);
         let desired = desired_widths[index];
         let remaining = tab_right.saturating_sub(x);
         let width = desired.min(remaining);
@@ -122,6 +122,18 @@ pub(crate) fn render_tab_bar(
             right_padding = padding.saturating_sub(left) as usize,
         );
         put_text(buffer, rect.x, rect.y, rect.width, &text, style);
+        // Fork: the marks in front of the name (see tab_label) in their colours.
+        for (offset, (mark, colour)) in (0_u16..).step_by(2).zip(tab_marks(tab, config)) {
+            let x = rect.x + left + offset;
+            if x >= rect.right() {
+                break;
+            }
+            if let Some(cell) = buffer.cell_mut((x, rect.y)) {
+                if cell.symbol() == mark {
+                    cell.set_fg(colour);
+                }
+            }
+        }
         hits.tabs.push((rect, tab.tab_id.clone()));
         first_visible.get_or_insert(index);
         last_visible = Some(index);
@@ -396,12 +408,58 @@ fn max_tab_scroll(widths: &[u16], available: u16) -> usize {
     start
 }
 
-fn tab_label(tab: &ClientShellTab) -> String {
-    if tab.zoomed {
-        format!("{} Z", tab.label)
-    } else {
-        tab.label.clone()
+fn tab_label(tab: &ClientShellTab, config: &ClientShellConfig) -> String {
+    // Fork: the tab's marks in front of its name, which has its flag taken off.
+    let mut label = String::new();
+    for (mark, _) in tab_marks(tab, config) {
+        label.push_str(mark);
+        label.push(' ');
     }
+    label.push_str(crate::client::shell::tab_flag::unflagged(&tab.label));
+    if tab.zoomed {
+        label.push_str(" Z");
+    }
+    label
+}
+
+/// Fork: the marks drawn in front of a tab's name, each one column and a space, with their
+/// colours: its agents' status (`tab_status_mark`), then its flag (`tab_flag`).
+pub(in crate::client::shell) fn tab_marks(
+    tab: &ClientShellTab,
+    config: &ClientShellConfig,
+) -> Vec<(&'static str, ratatui::style::Color)> {
+    tab_status_mark(tab, config)
+        .into_iter()
+        .chain(crate::client::shell::tab_flag::flag_mark(
+            &tab.label,
+            &config.palette,
+        ))
+        .collect()
+}
+
+/// Fork: the mark a tab whose agents are working, blocked or done gets in front of its
+/// name, and its colour: the agents panel's own for that status (`●` in its status
+/// colour, or ◐ × ✓ with `ui.status_indicators = "symbols"`). A tab's status is its
+/// agents' most urgent, as this client sees it, so the mark matches their rows.
+fn tab_status_mark(
+    tab: &ClientShellTab,
+    config: &ClientShellConfig,
+) -> Option<(&'static str, ratatui::style::Color)> {
+    tab_has_status_mark(tab).then(|| {
+        (
+            status_icon(tab.agent_status, config.status_indicators),
+            status_color(tab.agent_status, &config.palette),
+        )
+    })
+}
+
+/// Fork: whether `tab_status_mark` gives the tab a mark, which makes it wider.
+pub(in crate::client::shell) fn tab_has_status_mark(tab: &ClientShellTab) -> bool {
+    use crate::api::schema::AgentStatus;
+    matches!(
+        tab.agent_status,
+        AgentStatus::Working | AgentStatus::Blocked | AgentStatus::Done
+    )
 }
 
 #[cfg(test)]

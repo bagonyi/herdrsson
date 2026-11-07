@@ -100,6 +100,183 @@ fn tab_scroll_arrow_counts_a_tab_cut_short_at_the_edge_as_hidden() {
 }
 
 #[test]
+fn the_focused_tab_stays_in_view_when_marks_widen_the_tab_bar() {
+    let mut projected = snapshot();
+    projected.tabs = (1..=30)
+        .map(|number| ClientShellTab {
+            tab_id: format!("tab_{number}"),
+            workspace_id: "ws_1".into(),
+            number,
+            label: format!("t{number:02}x"),
+            custom_label: true,
+            zoomed: false,
+            focused: number == 30,
+            agent_status: AgentStatus::Idle,
+        })
+        .collect();
+    projected.focused_tab_id = Some("tab_30".into());
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    let focused_width = |state: &mut ClientShellState, snapshot: &ClientShellSnapshot| {
+        state.set_snapshot(Box::new(snapshot.clone()));
+        state.set_pane_surface(surface());
+        state.compose(160, 20).expect("overflow tab bar");
+        state
+            .hits
+            .tabs
+            .iter()
+            .find(|(_, tab_id)| tab_id == "tab_30")
+            .map(|(rect, _)| rect.width)
+    };
+    let before = focused_width(&mut state, &projected);
+    assert_eq!(before, Some(8), "the focused tab is drawn in full");
+
+    // Agents finish in every other tab: each gets a mark, two columns wider.
+    for tab in projected.tabs.iter_mut().take(29) {
+        tab.agent_status = AgentStatus::Done;
+    }
+    assert_eq!(
+        focused_width(&mut state, &projected),
+        before,
+        "the tab bar scrolls to keep the focused tab in view, as after a rename"
+    );
+}
+
+#[test]
+fn agent_rows_show_their_tabs_status_in_front_of_the_tab_name() {
+    let mut projected = snapshot();
+    projected.tabs[0].label = "review".into();
+    projected.tabs[0].custom_label = true;
+    // Another agent in the tab waits for an answer, so the tab is blocked.
+    projected.tabs[0].agent_status = AgentStatus::Blocked;
+    projected.agents = vec![ClientShellAgent {
+        pane_id: "pane_1".into(),
+        workspace_id: "ws_1".into(),
+        tab_id: "tab_1".into(),
+        name: None,
+        display_agent: None,
+        agent: Some("pi".into()),
+        title: None,
+        terminal_title: None,
+        terminal_title_stripped: None,
+        agent_status: AgentStatus::Working,
+        state_change_seq: 1,
+        state_labels: Vec::new(),
+        tokens: Vec::new(),
+        focused: false,
+    }];
+    let config = ClientShellConfig::from_config(&Config::default());
+    let palette = config.palette.clone();
+    let first_line = |snapshot: &ClientShellSnapshot| {
+        let row = crate::client::shell::agent_sidebar::agent_row(snapshot, "pane_1", &config, None)
+            .expect("agent row");
+        let spans = crate::ui::resolved_token_spans(
+            &row.rows[0],
+            ("●", Style::default().fg(palette.yellow)),
+            Style::default(),
+            Style::default(),
+            Style::default(),
+            Style::default(),
+            &palette,
+            80,
+        );
+        let text = spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        let mark = spans
+            .iter()
+            .rev()
+            .find(|span| span.content == "●")
+            .map(|span| span.style.fg);
+        (text, mark)
+    };
+
+    let (text, mark) = first_line(&projected);
+    assert_eq!(text, "● client-shell · ● review");
+    assert_eq!(
+        mark,
+        Some(Some(palette.red)),
+        "the tab's status, not the agent's"
+    );
+
+    projected.tabs[0].agent_status = AgentStatus::Idle;
+    assert_eq!(first_line(&projected).0, "● client-shell · review");
+}
+
+#[test]
+fn tabs_show_their_agents_status_in_front_of_their_names() {
+    let mut projected = snapshot();
+    let statuses = [
+        AgentStatus::Blocked,
+        AgentStatus::Working,
+        AgentStatus::Done,
+        AgentStatus::Unknown,
+    ];
+    projected.tabs.extend(
+        statuses
+            .iter()
+            .zip(2..)
+            .map(|(status, number)| ClientShellTab {
+                tab_id: format!("tab_{number}"),
+                workspace_id: "ws_1".into(),
+                number,
+                label: format!("t{number}"),
+                custom_label: true,
+                zoomed: false,
+                focused: false,
+                agent_status: *status,
+            }),
+    );
+    // Each drawn tab's text and the colour of its first non-blank cell.
+    let tabs = |config: ClientShellConfig| {
+        let mut state = ClientShellState::new(config);
+        state.set_snapshot(Box::new(projected.clone()));
+        state.set_pane_surface(surface());
+        let frame = state.compose(120, 20).expect("tab bar");
+        state
+            .hits
+            .tabs
+            .iter()
+            .map(|(rect, _)| {
+                let cells = (rect.x..rect.right())
+                    .map(|x| &frame.cells[(rect.y * frame.width + x) as usize])
+                    .collect::<Vec<_>>();
+                let text = cells
+                    .iter()
+                    .map(|cell| cell.symbol.as_str())
+                    .collect::<String>();
+                let first = cells
+                    .iter()
+                    .find(|cell| cell.symbol != " ")
+                    .expect("a name");
+                (text.trim().to_string(), first.fg)
+            })
+            .collect::<Vec<_>>()
+    };
+    let color = crate::protocol::color_to_u32;
+
+    let config = ClientShellConfig::from_config(&Config::default());
+    let palette = config.palette.clone();
+    let drawn = tabs(config);
+    assert_eq!(drawn[0].0, "1", "an idle tab gets no mark");
+    assert_eq!(drawn[1], ("● t2".into(), color(palette.red)));
+    assert_eq!(drawn[2], ("● t3".into(), color(palette.yellow)));
+    assert_eq!(drawn[3], ("● t4".into(), color(palette.teal)));
+    assert_eq!(drawn[4].0, "t5", "nor does one whose state is unknown");
+
+    let mut symbols = Config::default();
+    symbols.ui.status_indicators = crate::config::StatusIndicatorStyle::Symbols;
+    let drawn = tabs(ClientShellConfig::from_config(&symbols));
+    assert_eq!(
+        drawn[1..4]
+            .iter()
+            .map(|(text, _)| text.as_str())
+            .collect::<Vec<_>>(),
+        ["× t2", "◐ t3", "✓ t4"]
+    );
+}
+
+#[test]
 fn hidden_agents_panel_gives_the_sidebar_to_spaces() {
     let sidebar_text = |state: &mut ClientShellState| {
         let frame = state.compose(106, 30).expect("expanded sidebar");
