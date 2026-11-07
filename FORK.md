@@ -465,6 +465,10 @@ uses the Herdr number.
   compare times. Background shells running commands on a list, such as dev servers, don't keep a
   Claude agent working. A sidebar token can show a `prefix`, such as an icon, and `$shells` is
   just the count.
+- 2026.11.07 (on Herdr 0.9.5): tabs show their agents' status as the agents panel's coloured dot,
+  in the tab bar and before tab names in agent rows, and `keys.flag_tab` flags a tab with ⚑ to
+  come back to. Together they replace the Tab Status plugin, so notifications no longer strip its
+  markers.
 
 ## caveats
 
