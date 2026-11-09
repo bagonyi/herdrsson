@@ -377,7 +377,7 @@ group, by keyboard.
 
 ## plugins
 
-Four plugins that go well with this fork. All four should work with stock Herdr too (Claude
+Five plugins that go well with this fork. All five should work with stock Herdr too (Claude
 Subagents is tested only on this fork so far):
 
 - [Restore Commands](https://github.com/bagonyi/herdr-restore-commands) brings back commands such
@@ -391,6 +391,8 @@ Subagents is tested only on this fork so far):
 - [Claude Subagents](https://github.com/bagonyi/herdr-claude-subagents) shows in the agents
   panel how many agents each Claude agent has at work: its subagents, its teammates and its
   workflows' agents. On this fork a robot icon can go in front of the number.
+- [File Links](https://github.com/bagonyi/herdr-file-links) opens a Ctrl+clicked link to a file in
+  a pane, as Herdr does for web links (macOS).
 
 ## building
 
