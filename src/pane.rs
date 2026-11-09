@@ -360,6 +360,31 @@ async fn publish_background_shells(
     }
 }
 
+/// Fork: tells the app when Remote Control connects or disconnects a Claude agent, for its
+/// `$remote_control` token (see detect/manifest/remote_control.rs). It reads Claude's own record
+/// of it, not the screen, so it runs before the loop skips screen reads.
+async fn publish_remote_control(
+    state_events: &mpsc::Sender<AppEvent>,
+    pane_id: PaneId,
+    agent: Option<Agent>,
+    agent_job: &AgentJobTracker,
+    process_exited: bool,
+    now: std::time::Instant,
+    tracker: &mut crate::detect::manifest::remote_control::Tracker,
+) {
+    use crate::detect::manifest::remote_control;
+    let agent_pid = agent_job.agent_pid().filter(|_| !process_exited);
+    let Some(connected) = tracker.observe(agent, agent_pid, now, remote_control::connected) else {
+        return;
+    };
+    if let Err(err) = state_events
+        .send(AppEvent::RemoteControlObserved { pane_id, connected })
+        .await
+    {
+        warn!(pane = pane_id.raw(), %err, "failed to deliver Remote Control state");
+    }
+}
+
 /// Fork: an idle Claude agent with a background shell still running counts as working (see
 /// detect/manifest/background_shells.rs).
 fn count_background_shells_as_working(
@@ -1027,6 +1052,7 @@ fn spawn_basic_detection_task(
         let mut pending_idle = PendingIdleConfirmation::default();
         let mut last_codex_prompt_ready = false;
         let mut last_background_shells = None; // Fork
+        let mut remote_control = crate::detect::manifest::remote_control::Tracker::default(); // Fork
         let mut last_self_reported_shell_check = None;
         let mut agent_job = AgentJobTracker::default();
 
@@ -1192,6 +1218,17 @@ fn spawn_basic_detection_task(
             let process_exited = pending_foreground_shell_clear
                 && agent.is_some()
                 && !foreground_shell_exit_reported;
+
+            publish_remote_control(
+                &state_events,
+                pane_id,
+                agent,
+                &agent_job,
+                process_exited,
+                now,
+                &mut remote_control,
+            )
+            .await;
 
             // The visible screen belongs to another job while the agent waits
             // in the background, so it says nothing about the agent's state.
@@ -2969,6 +3006,8 @@ impl PaneRuntime {
                 let mut pending_idle = PendingIdleConfirmation::default();
                 let mut last_codex_prompt_ready = false;
                 let mut last_background_shells = None; // Fork
+                let mut remote_control =
+                    crate::detect::manifest::remote_control::Tracker::default(); // Fork
                 let mut last_self_reported_shell_check = None;
                 let mut agent_job = AgentJobTracker::default();
 
@@ -3214,6 +3253,17 @@ impl PaneRuntime {
                     let process_exited = pending_foreground_shell_clear
                         && agent.is_some()
                         && !foreground_shell_exit_reported;
+
+                    publish_remote_control(
+                        &state_events,
+                        pane_id,
+                        agent,
+                        &agent_job,
+                        process_exited,
+                        now,
+                        &mut remote_control,
+                    )
+                    .await;
 
                     // The visible screen belongs to another job while the agent
                     // waits in the background, so it says nothing about its state.

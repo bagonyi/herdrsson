@@ -117,7 +117,14 @@ impl App {
 
         // Fork: see detect/manifest/background_shells.rs.
         if let AppEvent::BackgroundShellsObserved { pane_id, count } = ev {
-            self.set_background_shells_token(pane_id, count);
+            use crate::detect::manifest::background_shells::{token_text, SHELLS_TOKEN};
+            self.set_fork_pane_token(pane_id, SHELLS_TOKEN, token_text(count));
+            return Vec::new();
+        }
+        // Fork: see detect/manifest/remote_control.rs.
+        if let AppEvent::RemoteControlObserved { pane_id, connected } = ev {
+            use crate::detect::manifest::remote_control::{token_text, REMOTE_CONTROL_TOKEN};
+            self.set_fork_pane_token(pane_id, REMOTE_CONTROL_TOKEN, token_text(connected));
             return Vec::new();
         }
 
@@ -816,10 +823,15 @@ impl App {
         }
     }
 
-    /// Fork: a Claude agent's background shells as its pane's `$shells` token, set and cleared by
-    /// what its footer shows (see detect/manifest/background_shells.rs).
-    fn set_background_shells_token(&mut self, pane_id: crate::layout::PaneId, count: u32) {
-        use crate::detect::manifest::background_shells::{token_text, SHELLS_TOKEN};
+    /// Fork: sets or (with None) clears a pane token Herdrsson itself keeps, such as a Claude
+    /// agent's `$shells` (detect/manifest/background_shells.rs) and `$remote_control`
+    /// (detect/manifest/remote_control.rs).
+    fn set_fork_pane_token(
+        &mut self,
+        pane_id: crate::layout::PaneId,
+        token: &str,
+        value: Option<String>,
+    ) {
         let Some(ws_idx) = self
             .state
             .workspaces
@@ -835,8 +847,7 @@ impl App {
         else {
             return;
         };
-        let patch =
-            std::collections::HashMap::from([(SHELLS_TOKEN.to_string(), token_text(count))]);
+        let patch = std::collections::HashMap::from([(token.to_string(), value)]);
         if terminal.metadata_tokens.patch(patch, None, Instant::now()) {
             terminal.revision = terminal.revision.saturating_add(1);
             self.emit_pane_updated(ws_idx, pane_id);

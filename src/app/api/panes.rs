@@ -4516,6 +4516,35 @@ mod tests {
             .is_empty());
     }
 
+    // Fork: see detect/manifest/remote_control.rs.
+    #[test]
+    fn remote_control_sets_and_clears_the_remote_control_token() {
+        let (mut app, pane_id) = app_with_test_workspace();
+        let (_, internal_pane_id) = app.parse_pane_id(&pane_id).unwrap();
+        let terminal_id = app.state.workspaces[0]
+            .pane_state(internal_pane_id)
+            .unwrap()
+            .attached_terminal_id
+            .clone();
+        let observe = |app: &mut App, connected| {
+            app.handle_internal_event(crate::events::AppEvent::RemoteControlObserved {
+                pane_id: internal_pane_id,
+                connected,
+            });
+        };
+
+        observe(&mut app, true);
+        assert_eq!(
+            app.state.terminals[&terminal_id].metadata_tokens.values(),
+            std::collections::HashMap::from([("remote_control".into(), "\u{F015F}".into())])
+        );
+        observe(&mut app, false);
+        assert!(app.state.terminals[&terminal_id]
+            .metadata_tokens
+            .values()
+            .is_empty());
+    }
+
     #[test]
     fn pane_metadata_uses_one_sequence_for_presentation_and_tokens() {
         let (mut app, pane_id) = app_with_test_workspace();

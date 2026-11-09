@@ -1467,6 +1467,8 @@ impl AppState {
                 .collect(),
             // Fork: the app sets the `$shells` token before events reach this state.
             AppEvent::BackgroundShellsObserved { .. } => Vec::new(),
+            // Fork: and the `$remote_control` token.
+            AppEvent::RemoteControlObserved { .. } => Vec::new(),
             AppEvent::StateChanged {
                 pane_id,
                 agent,

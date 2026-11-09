@@ -1534,6 +1534,8 @@ fn line_start_offset(content: &str, lines: &[&str], index: usize) -> usize {
 
 // Fork: a Claude agent's background shells.
 pub mod background_shells;
+// Fork: whether Remote Control connects a Claude agent.
+pub mod remote_control;
 
 #[cfg(test)]
 mod tests;

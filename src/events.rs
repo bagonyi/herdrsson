@@ -93,6 +93,8 @@ pub enum AppEvent {
     CodexPromptObserved { pane_id: PaneId, ready: bool },
     /// Fork: the number of background shells a Claude agent's footer shows changed.
     BackgroundShellsObserved { pane_id: PaneId, count: u32 },
+    /// Fork: Remote Control connected or disconnected a Claude agent.
+    RemoteControlObserved { pane_id: PaneId, connected: bool },
     /// Fallback detector state changed in a pane.
     StateChanged {
         pane_id: PaneId,

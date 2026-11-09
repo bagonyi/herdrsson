@@ -137,6 +137,14 @@ through `title_command`.
 - A Claude agent's background shells show in its row as `$shells`, their number: `2`, with a
   `prefix` for an icon, e.g. `󰞷 2`. Herdr reads them from the footer under Claude's prompt box
   (`⏵⏵ auto mode on · 2 shells`), so the token comes and goes with them.
+- While Remote Control connects a Claude agent to claude.ai, its row can show a cloud,
+  `$remote_control` (`󰅟`, the Nerd Font symbols' cloud; a rule's `text` can show something
+  else). Claude shows nothing of it on screen, so Herdr reads Claude Code's own record of the
+  agent's process, `~/.claude/sessions/<pid>.json` (or under the Herdr server's
+  `CLAUDE_CONFIG_DIR`; a Claude started with a different one gets no cloud), every
+  2 seconds: the cloud shows while its `bridgeSessionId` is set, and goes when Remote Control
+  disconnects or Claude exits. The record isn't documented, so a Claude Code update can change
+  it; then the cloud just doesn't show.
 - With `claude_background_shells_working`, an idle Claude agent counts as working while one of its
   background shells is still running. Claude can start a long job, end its turn and be woken
   when the job finishes, and its tab shows working until then instead of done halfway. Only
