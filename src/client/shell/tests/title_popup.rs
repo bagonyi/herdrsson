@@ -273,6 +273,44 @@ fn the_popup_stays_inside_a_window_that_shrinks_and_loses_the_title() {
     assert_eq!(popup_rect(&state), centred(106, 20));
 }
 
+/// The title's popup, `width` × `height` cells.
+fn sized_popup(width: u16, height: u16) -> PaneSurfaceFrame {
+    let mut surface = surface_with_popup();
+    let popup = surface.popup.as_mut().expect("popup");
+    popup.width = Some(crate::protocol::ClientShellPopupSize::Cells(width));
+    popup.height = Some(crate::protocol::ClientShellPopupSize::Cells(height));
+    surface
+}
+
+#[test]
+fn a_popup_with_no_room_above_or_below_the_title_sits_right_of_it() {
+    let mut state = title_state(106, 40);
+    click_title(&mut state);
+    state.set_pane_surface(sized_popup(30, 24));
+    let mut beside = false;
+    for rows in 24..40 {
+        state.compose(106, rows).expect("window");
+        let (title, placed) = (state.hits.agent_panel_title, popup_rect(&state));
+        assert!(
+            placed.bottom() <= rows && placed.right() <= 106,
+            "{rows} rows: {placed:?}"
+        );
+        if title.bottom() + placed.height > rows && title.y < placed.height {
+            assert_eq!(
+                (placed.x, placed.y),
+                (title.right(), title.y.min(rows - placed.height)),
+                "{rows} rows: right of the title, level with it or as high as it takes"
+            );
+            assert!(
+                placed.intersection(title).is_empty(),
+                "{rows} rows: the title shows"
+            );
+            beside = true;
+        }
+    }
+    assert!(beside, "some window had no room above or below the title");
+}
+
 #[test]
 fn a_click_whose_popup_never_shows_leaves_no_anchor_for_the_next_popup() {
     // Its command failed; then a key command's popup opens.

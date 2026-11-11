@@ -194,10 +194,11 @@ through `title_command`.
 - A click on that text can open a command in a popup pane, as a key command with
   `type = "popup"` does (`popup` in `title_command`), such as Claude's usage in detail. The popup
   hangs from the text, below it or above it when there's no room below (in a window too short
-  for either, over it), with a title of your choosing in its frame, and closes when the command
-  exits or the text is clicked again. The text is tinted towards the accent colour while the
-  mouse is over it and while its popup is open (underlined in a theme of terminal colours). A
-  mistake in `popup` only costs the click, with a warning, not the whole config.
+  for either, beside it on the right, so the text stays in sight), with a title of your choosing
+  in its frame, and closes when the command exits or the text is clicked again. The text is
+  tinted towards the accent colour while the mouse is over it and while its popup is open
+  (underlined in a theme of terminal colours). A mistake in `popup` only costs the click, with a
+  warning, not the whole config.
 
   <img src="assets/usage-popup.png" width="464" alt="The agents panel's title pill, 7d 81% · 22h, with a popup titled Claude usage hanging from it: this week's usage at 81% with a bar, when it resets and the pace it's on, the week's Fable limit at 21%, where the usage went, extra usage off, the plan and the time of the figures, and r to refresh, q to close">
 

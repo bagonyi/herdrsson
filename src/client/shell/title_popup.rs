@@ -151,9 +151,12 @@ impl ClientShellState {
 
     /// Where the popup goes: the title's popup hangs from the title as drawn now, its left edge
     /// under the title's, moved left as far as it takes to fit the window. Without room below
-    /// the title it sits above it, and without room there either, as low as it fits. When the
-    /// title isn't drawn (it printed nothing, or a narrow window has no sidebar) it stays
-    /// centred, as any other popup does.
+    /// the title it sits above it. Without room there either, it sits right of the title, its
+    /// top level with the title's row and moved up as far as it takes to fit, so the title
+    /// stays in sight (a popup is never wider than the panes, so beside a title in the sidebar
+    /// there is room); failing that too, as low as it fits. When the title isn't drawn (it
+    /// printed nothing, or a narrow window has no sidebar) it stays centred, as any other popup
+    /// does.
     pub(super) fn place_popup(
         &self,
         terminal_id: &str,
@@ -174,16 +177,18 @@ impl ClientShellState {
         }
         let outer = geometry.outer;
         let lowest = rows.saturating_sub(outer.height);
-        let x = title.x.min(cols.saturating_sub(outer.width));
-        let y = if title.bottom().saturating_add(outer.height) <= rows {
-            title.bottom()
+        let under = title.x.min(cols.saturating_sub(outer.width));
+        let (x, y) = if title.bottom().saturating_add(outer.height) <= rows {
+            (under, title.bottom())
         } else if title.y >= outer.height {
-            title.y - outer.height
+            (under, title.y - outer.height)
+        } else if title.right().saturating_add(outer.width) <= cols {
+            (title.right(), title.y)
         } else {
-            lowest
-        }
+            (under, lowest)
+        };
         // Inside the window whatever the title's place, as drawing past its edge panics.
-        .min(lowest);
+        let y = y.min(lowest);
         PopupResolvedGeometry {
             outer: Rect { x, y, ..outer },
             inner: Rect {
