@@ -107,6 +107,8 @@ pub(super) struct ShellHitMap {
     pub(super) agent_sort_toggle: Rect,
     /// Fork: the agents panel's `title_command` text, clicked to open its popup.
     pub(super) agent_panel_title: Rect,
+    /// Fork: the spaces header's system usage, clicked to open its popup; empty without one.
+    pub(super) system_usage: Rect,
     pub(super) sidebar_divider: Rect,
     pub(super) sidebar_section_divider: Rect,
     pub(super) sidebar_toggle: Rect,

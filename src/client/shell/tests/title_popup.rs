@@ -312,3 +312,151 @@ fn a_click_whose_popup_never_shows_leaves_no_anchor_for_the_next_popup() {
     assert_eq!(popup_rect(&state), centred(106, 30));
     assert!(!state.title_popup_open());
 }
+
+/// A window whose spaces header shows the system usage, with a popup when `command_id` is given.
+fn system_usage_state(command_id: Option<&str>) -> ClientShellState {
+    let mut projected = snapshot();
+    projected.agent_panel_title = Some("7d 42%".into());
+    projected.agent_panel_title_command_id = Some("cmd_title".into());
+    projected.system_usage = Some(crate::protocol::ClientShellSystemUsage {
+        cpu_percent: Some(78),
+        memory_used_bytes: 13_300 << 20,
+        memory_total_bytes: 16 << 30,
+        memory_pressure: crate::protocol::ClientShellMemoryPressure::Warning,
+    });
+    projected.system_usage_command_id = command_id.map(str::to_owned);
+    let mut config = Config::default();
+    config.ui.sidebar_max_width = 60;
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.sidebar_width = 40;
+    state.sidebar_width_manual = true;
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+    state.compose(106, 30).expect("frame");
+    state
+}
+
+fn click_at(state: &mut ClientShellState, rect: Rect) -> Vec<ClientShellAction> {
+    state
+        .handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: rect.x + 2,
+            row: rect.y,
+            modifiers: KeyModifiers::empty(),
+        })])
+        .actions
+}
+
+#[test]
+fn the_spaces_header_shows_the_system_usage_coloured_by_load_and_pressure() {
+    let mut state = system_usage_state(None);
+    let frame = state.compose(106, 30).expect("frame");
+    let rows = frame_rows(&frame);
+    let header = rows[0].chars().take(40).collect::<String>();
+    assert!(header.starts_with(" spaces"), "{header:?}");
+    assert!(
+        header.contains(" 78%  \u{f035b} 13.0G "),
+        "CPU, then memory in GiB: {header:?}"
+    );
+    let palette = &state.config.palette;
+    let colour_of = |needle: &str| {
+        let (x, y) = cell_symbol_position(&frame, Rect::new(0, 0, 40, 1), needle);
+        frame.cells[usize::from(y) * usize::from(frame.width) + usize::from(x)].fg
+    };
+    assert_eq!(
+        colour_of("78%"),
+        crate::protocol::color_to_u32(palette.peach),
+        "78% busy is orange"
+    );
+    assert_eq!(
+        colour_of("13.0G"),
+        crate::protocol::color_to_u32(palette.peach),
+        "memory takes the pressure's colour"
+    );
+    assert!(
+        state.hits.system_usage.is_empty(),
+        "nothing to click without a popup"
+    );
+    assert!(click_at(&mut state, Rect::new(30, 0, 1, 1)).is_empty());
+}
+
+#[test]
+fn a_narrow_sidebar_shows_the_system_usage_without_its_icons() {
+    let mut state = system_usage_state(None);
+    let header = |state: &mut ClientShellState, width: u16| {
+        state.sidebar_width = width;
+        let frame = state.compose(106, 30).expect("frame");
+        frame_rows(&frame)[0]
+            .chars()
+            .take(usize::from(width))
+            .collect::<String>()
+    };
+    let narrow = header(&mut state, 24);
+    assert!(narrow.contains(" 78%  13.0G "), "{narrow:?}");
+    assert!(!narrow.contains('\u{f035b}'), "{narrow:?}");
+    let too_narrow = header(&mut state, 20);
+    assert!(!too_narrow.contains('%'), "left out: {too_narrow:?}");
+}
+
+#[test]
+fn a_click_on_the_system_usage_opens_its_popup_and_another_closes_it() {
+    let mut state = system_usage_state(Some("cmd_system"));
+    let pill = state.hits.system_usage;
+    // The sidebar's 40 columns end in its divider; the pill ends a column before that, where the
+    // agents panel's title pill ends without a sort label.
+    assert_eq!((pill.y, pill.right()), (0, 38), "a column from the edge");
+    let actions = click_at(&mut state, pill);
+    let [ClientShellAction::Endpoint { request, .. }] = &actions[..] else {
+        panic!("expected the popup's command, got {actions:?}");
+    };
+    let crate::api::schema::Method::CommandInvoke(params) = &request.method else {
+        panic!("expected command invocation");
+    };
+    assert_eq!(params.command_id, "cmd_system");
+    state.set_pane_surface(surface_with_popup());
+    state.compose(106, 30).expect("popup");
+    let placed = popup_rect(&state);
+    assert_eq!(
+        (placed.x, placed.y),
+        (pill.x, pill.bottom()),
+        "hangs from it"
+    );
+    assert!(state.title_popup_open());
+
+    // A click on the other title leaves it be; one on its own closes it.
+    let title = state.hits.agent_panel_title;
+    assert!(click_at(&mut state, title).is_empty());
+    let actions = click_at(&mut state, pill);
+    let [ClientShellAction::Endpoint { request, .. }] = &actions[..] else {
+        panic!("expected the popup to close, got {actions:?}");
+    };
+    assert!(matches!(
+        request.method,
+        crate::api::schema::Method::PopupClose(_)
+    ));
+}
+
+#[test]
+fn a_second_click_on_the_agents_panel_title_closes_its_popup() {
+    let mut state = title_state(106, 30);
+    click_title(&mut state);
+    state.set_pane_surface(surface_with_popup());
+    state.compose(106, 30).expect("popup");
+    let title = state.hits.agent_panel_title;
+    let actions = click_at(&mut state, title);
+    let [ClientShellAction::Endpoint { request, .. }] = &actions[..] else {
+        panic!("expected the popup to close, got {actions:?}");
+    };
+    assert!(matches!(
+        request.method,
+        crate::api::schema::Method::PopupClose(_)
+    ));
+
+    // Another popup (a key command's) isn't the title's to close.
+    let mut state = title_state(106, 30);
+    open_key_popup(&mut state);
+    state.set_pane_surface(other_popup());
+    state.compose(106, 30).expect("popup");
+    let title = state.hits.agent_panel_title;
+    assert!(click_at(&mut state, title).is_empty());
+}

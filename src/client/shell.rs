@@ -42,6 +42,8 @@ mod tab_flag;
 // Fork: the agents panel title's styled text.
 mod styled_text;
 mod surface_patch;
+// Fork: the machine's CPU and memory use in the spaces header.
+mod system_usage;
 mod text_editor;
 mod title_popup;
 mod unseen_counts;

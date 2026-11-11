@@ -23,6 +23,7 @@ mod popup;
 mod runtime;
 mod session;
 pub mod state;
+mod system_usage;
 mod tab_bar_status;
 mod terminal_targets;
 mod terminal_titles;
@@ -156,6 +157,8 @@ pub struct App {
     tab_bar_datetimes: Vec<tab_bar_status::TabBarDatetimeRuntime>,
     tab_bar_commands: Vec<tab_bar_status::TabBarCommandRuntime>,
     next_tab_bar_datetime_refresh: Option<Instant>,
+    /// Fork: `[ui.sidebar.spaces] system_usage`'s readings, none while it's off.
+    system_usage: Option<system_usage::SystemUsageRuntime>,
     /// Parsed `ui.window_title` plus the hostname resolved when it was applied.
     window_title_template: Option<(crate::config::WindowTitleTemplate, String)>,
     pub(crate) persist_pane_history: bool,
@@ -628,7 +631,8 @@ impl App {
         let client_shell_keybindings_profile = config.local_keybindings_profile_toml().ok();
         let endpoint_commands =
             custom_commands::EndpointCommandRegistry::new(&state.keybinds.custom_commands)
-                .with_title_popup(state.sidebar_agents.title_command.as_ref());
+                .with_title_popup(state.sidebar_agents.title_command.as_ref())
+                .with_system_usage_popup(state.sidebar_spaces.system_usage.as_ref());
 
         let mut app = Self {
             plugin_installation_leases,
@@ -687,6 +691,7 @@ impl App {
             tab_bar_datetimes: Vec::new(),
             tab_bar_commands: Vec::new(),
             next_tab_bar_datetime_refresh: None,
+            system_usage: None,
             window_title_template: None,
             persist_pane_history: config.experimental.pane_history,
             last_render_at: None,
@@ -705,6 +710,7 @@ impl App {
         };
         app.configure_tab_bar_status(&config.ui.tab_bar_right, &config.ui.tab_bar_right_separator);
         app.configure_agent_panel_title(config.ui.sidebar.agents.title_command.as_ref());
+        app.configure_system_usage(config.ui.sidebar.spaces.system_usage.as_ref());
         app.configure_window_title(&config.ui.window_title);
         app.refresh_restored_workspace_git_metadata();
         Ok(app)
@@ -868,7 +874,8 @@ impl App {
         };
         self.endpoint_commands =
             custom_commands::EndpointCommandRegistry::new(&self.state.keybinds.custom_commands)
-                .with_title_popup(self.state.sidebar_agents.title_command.as_ref());
+                .with_title_popup(self.state.sidebar_agents.title_command.as_ref())
+                .with_system_usage_popup(self.state.sidebar_spaces.system_usage.as_ref());
         self.sync_toast_deadline(previous_toast);
         report
     }
@@ -922,6 +929,9 @@ impl App {
                 diagnostics.extend(crate::config::title_command_diagnostics(
                     &config.ui.sidebar.agents,
                 ));
+                diagnostics.extend(crate::config::system_usage_diagnostics(
+                    &config.ui.sidebar.spaces,
+                ));
                 diagnostics.extend(crate::config::window_title_diagnostics(
                     &config.ui.window_title,
                 ));
@@ -939,6 +949,7 @@ impl App {
                     &config.ui.tab_bar_right_separator,
                 );
                 self.configure_agent_panel_title(config.ui.sidebar.agents.title_command.as_ref());
+                self.configure_system_usage(config.ui.sidebar.spaces.system_usage.as_ref());
                 self.configure_window_title(&config.ui.window_title);
                 self.state.agent_panel_sort =
                     agent_panel_sort_from_config(config.ui.agent_panel_sort);

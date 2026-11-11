@@ -264,6 +264,21 @@ pub(crate) fn render_sidebar(
             .fg(palette.overlay0)
             .add_modifier(Modifier::BOLD),
     );
+    // Fork: the machine's CPU and memory use at the right of the header, a column from its edge
+    // as the agents panel's title pill is, and clicked for `system_usage`'s popup.
+    let usage = snapshot.system_usage.as_ref().and_then(|usage| {
+        super::system_usage::render_system_usage(
+            buffer,
+            workspace_area.x + 8,
+            workspace_area.right().saturating_sub(1),
+            workspace_area.y,
+            usage,
+            palette,
+        )
+    });
+    hits.system_usage = usage
+        .filter(|_| config.mouse_capture && snapshot.system_usage_command_id.is_some())
+        .unwrap_or_default();
 
     let preview = state
         .selected_workspace_id

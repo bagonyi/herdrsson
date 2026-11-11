@@ -3,7 +3,7 @@ use crossterm::event::{MouseEvent, MouseEventKind};
 use ratatui::style::Color;
 
 /// A tab, sidebar row or the sidebar's resize divider under the mouse, or the agents panel's
-/// title when a click on it opens a popup.
+/// title (or the spaces header's system usage) when a click on it opens a popup.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HoveredRow {
     Tab(Rect),
@@ -45,8 +45,11 @@ impl ClientShellState {
             None => {}
         }
         // The title stays lit while the popup it opened is open.
-        let title = self.hits.agent_panel_title;
-        if self.title_popup_open() && !title.is_empty() {
+        if let Some(title) = self
+            .open_popup_title()
+            .map(|title| self.title_rect(title))
+            .filter(|title| !title.is_empty())
+        {
             return Some(HoveredRow::Title(title));
         }
         let point = self.row_hover?;
@@ -54,7 +57,11 @@ impl ClientShellState {
             .snapshot
             .as_deref()
             .is_some_and(|snapshot| snapshot.agent_panel_title_command_id.is_some())
-            .then_some(HoveredRow::Title(title));
+            .then_some(HoveredRow::Title(self.hits.agent_panel_title));
+        // Fork: the system usage's rect is empty unless a click on it opens a popup.
+        let title = title
+            .into_iter()
+            .chain([HoveredRow::Title(self.hits.system_usage)]);
         let tabs = self
             .hits
             .tabs

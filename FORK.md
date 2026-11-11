@@ -88,6 +88,22 @@ through `title_command`.
   picker, the agents panel and the collapsed sidebar. With saved SSH machines, the sidebar lists
   machines instead and shows full names, in the grouped order, without headers.
 
+### system usage
+
+- The spaces header can show the machine's CPU and memory use at its right, `  78%  󰍛 13.3G`, in a
+  pill like the agents panel's title pill (`system_usage`, see [settings](#settings)), with the
+  Nerd Font symbols' chip and memory module as icons. The server reads them from the kernel itself
+  every few seconds (macOS only so far): a few system calls, no process started, so it costs next
+  to nothing even when the machine is struggling, which is when it matters. CPU is green, yellow,
+  orange and red as it passes 40, 70 and 90%; memory, what Activity Monitor calls Memory Used,
+  takes the colour of the system's memory pressure (green normal, orange warn, red critical), as a
+  Mac fills its memory by design and how full it is says little alone. In a sidebar too narrow for
+  it the icons go (`78%  13.3G`), and narrower still the pill does. With saved SSH machines, whose
+  sidebar lists machines, it isn't shown.
+- A click on it opens a command in a popup hanging from it, as the agents panel's title does, and
+  another click closes it. Mine shows CPU and memory in detail, then memory and CPU per pane,
+  labelled with space, tab and what runs there, and per app outside Herdr.
+
 ### agents
 
 - Each space shows a red count of agents waiting for you (finished and not yet looked at, or
@@ -179,9 +195,9 @@ through `title_command`.
   `type = "popup"` does (`popup` in `title_command`), such as Claude's usage in detail. The popup
   hangs from the text, below it or above it when there's no room below (in a window too short
   for either, over it), with a title of your choosing in its frame, and closes when the command
-  exits. The text is tinted towards the accent colour while the mouse is over it and while its
-  popup is open (underlined in a theme of terminal colours). A mistake in `popup` only costs the
-  click, with a warning, not the whole config.
+  exits or the text is clicked again. The text is tinted towards the accent colour while the
+  mouse is over it and while its popup is open (underlined in a theme of terminal colours). A
+  mistake in `popup` only costs the click, with a warning, not the whole config.
 
   <img src="assets/usage-popup.png" width="464" alt="The agents panel's title pill, 7d 81% · 22h, with a popup titled Claude usage hanging from it: this week's usage at 81% with a bar, when it resets and the pace it's on, the week's Fable limit at 21%, where the usage went, extra usage off, the plan and the time of the figures, and r to refresh, q to close">
 
@@ -311,7 +327,7 @@ through `title_command`.
 
 ## settings
 
-Thirteen settings are new; all go in `~/.config/herdr/config.toml`:
+Fourteen settings are new; all go in `~/.config/herdr/config.toml`:
 
 ```toml
 [ui]
@@ -320,6 +336,12 @@ Thirteen settings are new; all go in `~/.config/herdr/config.toml`:
 seen_delay_ms = 1000
 # Zen mode's width in columns, at least 40. Default: 150.
 zen_width = 150
+
+[ui.sidebar.spaces]
+# The machine's CPU and memory use at the right of the spaces header, read every
+# interval_seconds (5) without starting a process; macOS only. A click on it opens popup as
+# title_command's popup does, and another click closes it. Default: none.
+system_usage = { interval_seconds = 5, popup = { command = "top -o mem", title = "System", width = 80, height = 30 } }
 
 [ui.sidebar.agents]
 # Hide the agents panel; the spaces list takes the whole sidebar. Default: false.

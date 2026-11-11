@@ -1,25 +1,57 @@
-//! Fork: the popup of the agents panel title's command (`title_command`'s `popup`). A click on
-//! the title opens it, and in the window whose click opened it, it hangs from the title instead
-//! of sitting in the middle of the panes. The server sizes its terminal as it does any popup's,
-//! so only where it's drawn changes: that's this client's business alone.
+//! Fork: the popup of the agents panel title's command (`title_command`'s `popup`), and of the
+//! spaces header's system usage (`system_usage`'s `popup`). A click on the title opens it, and in
+//! the window whose click opened it, it hangs from the title instead of sitting in the middle of
+//! the panes; another click on the title closes it. The server sizes its terminal as it does any
+//! popup's, so only where it's drawn changes: that's this client's business alone.
 
 use super::*;
 use crate::popup_size::PopupResolvedGeometry;
 
-/// A click on the title, waiting for its popup, then the popup's terminal once it shows.
+/// A clickable title with a popup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PopupTitle {
+    /// The agents panel's `title_command` text.
+    AgentPanel,
+    /// The spaces header's system usage.
+    SystemUsage,
+}
+
+/// A click on a title, waiting for its popup, then the popup's terminal once it shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct TitlePopupAnchor {
+    title: PopupTitle,
     terminal_id: Option<String>,
 }
 
 impl ClientShellState {
-    /// A click on the title opens its popup, as a popup key command opens its own. False when
-    /// the endpoint has none, so the click goes on.
+    /// A click on the agents panel's title opens its popup.
     pub(super) fn open_agent_panel_title_popup(&mut self, outcome: &mut ClientShellInput) -> bool {
+        self.open_title_popup(PopupTitle::AgentPanel, outcome)
+    }
+
+    /// Where `title` is drawn now, empty when it isn't (or can't be clicked).
+    pub(super) fn title_rect(&self, title: PopupTitle) -> Rect {
+        match title {
+            PopupTitle::AgentPanel => self.hits.agent_panel_title,
+            PopupTitle::SystemUsage => self.hits.system_usage,
+        }
+    }
+
+    /// A click on `title` opens its popup, as a popup key command opens its own. False when the
+    /// endpoint has none, so the click goes on.
+    pub(super) fn open_title_popup(
+        &mut self,
+        title: PopupTitle,
+        outcome: &mut ClientShellInput,
+    ) -> bool {
         let Some(snapshot) = self.snapshot.as_deref() else {
             return false;
         };
-        let Some(command_id) = snapshot.agent_panel_title_command_id.clone() else {
+        let command_id = match title {
+            PopupTitle::AgentPanel => snapshot.agent_panel_title_command_id.clone(),
+            PopupTitle::SystemUsage => snapshot.system_usage_command_id.clone(),
+        };
+        let Some(command_id) = command_id else {
             return false;
         };
         let params = crate::api::schema::CommandInvokeParams {
@@ -36,7 +68,10 @@ impl ClientShellState {
             PendingEndpointKind::PopupCommand,
             outcome,
         ) {
-            self.title_popup_anchor = Some(TitlePopupAnchor { terminal_id: None });
+            self.title_popup_anchor = Some(TitlePopupAnchor {
+                title,
+                terminal_id: None,
+            });
         } else {
             self.popup_pending = false;
         }
@@ -79,11 +114,39 @@ impl ClientShellState {
         self.title_popup_anchor = None;
     }
 
-    /// Whether the popup on screen is the title's, opened here.
+    /// Whether the popup on screen is a title's, opened here.
+    #[cfg(test)]
     pub(super) fn title_popup_open(&self) -> bool {
-        self.title_popup_anchor.as_ref().is_some_and(|anchor| {
-            anchor.terminal_id.is_some() && anchor.terminal_id == self.popup_terminal_id
-        })
+        self.open_popup_title().is_some()
+    }
+
+    /// The title whose popup is on screen, opened here.
+    pub(super) fn open_popup_title(&self) -> Option<PopupTitle> {
+        self.title_popup_anchor
+            .as_ref()
+            .filter(|anchor| {
+                anchor.terminal_id.is_some() && anchor.terminal_id == self.popup_terminal_id
+            })
+            .map(|anchor| anchor.title)
+    }
+
+    /// A click at `point` on the title whose popup is open closes the popup, as the click on it
+    /// opened it. False for any other click, and when the endpoint can't close popups.
+    pub(super) fn close_title_popup_at(
+        &mut self,
+        point: (u16, u16),
+        outcome: &mut ClientShellInput,
+    ) -> bool {
+        let Some(title) = self.open_popup_title() else {
+            return false;
+        };
+        let method = crate::api::schema::Method::PopupClose(crate::api::schema::EmptyParams {});
+        if !contains(self.title_rect(title), point) || !self.supports_endpoint_method(&method) {
+            return false;
+        }
+        self.push_endpoint_method(method, outcome);
+        outcome.repaint = true;
+        true
     }
 
     /// Where the popup goes: the title's popup hangs from the title as drawn now, its left edge
@@ -98,12 +161,15 @@ impl ClientShellState {
         cols: u16,
         rows: u16,
     ) -> PopupResolvedGeometry {
-        let title = self.hits.agent_panel_title;
-        let anchored = self
+        let Some(anchor) = self
             .title_popup_anchor
             .as_ref()
-            .is_some_and(|anchor| anchor.terminal_id.as_deref() == Some(terminal_id));
-        if !anchored || title.is_empty() {
+            .filter(|anchor| anchor.terminal_id.as_deref() == Some(terminal_id))
+        else {
+            return geometry;
+        };
+        let title = self.title_rect(anchor.title);
+        if title.is_empty() {
             return geometry;
         }
         let outer = geometry.outer;

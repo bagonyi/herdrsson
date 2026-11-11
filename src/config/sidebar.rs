@@ -728,13 +728,13 @@ impl AgentsTitlePopupConfig {
         (self.invalid.is_none() && !self.command.trim().is_empty()).then_some(self)
     }
 
-    /// Warnings for it: what keeps it from opening, and keys it ignores.
-    fn problems(&self) -> Vec<String> {
-        const KEY: &str = "ui.sidebar.agents.title_command.popup";
+    /// Warnings for it, as the config key `key` and a click on `clicked`: what keeps it from
+    /// opening, and keys it ignores.
+    fn problems(&self, key: &str, clicked: &str) -> Vec<String> {
         let mut problems: Vec<String> = self
             .unknown_keys
             .iter()
-            .map(|key| format!("unknown config key {KEY}.{key}; ignoring key"))
+            .map(|unknown| format!("unknown config key {key}.{unknown}; ignoring key"))
             .collect();
         let problem = match &self.invalid {
             Some(invalid) => Some(invalid.trim().to_owned()),
@@ -745,7 +745,7 @@ impl AgentsTitlePopupConfig {
                 .then(|| "command is empty".to_owned()),
         };
         problems.extend(
-            problem.map(|problem| format!("{KEY} {problem}; a click on the title opens nothing")),
+            problem.map(|problem| format!("{key} {problem}; a click on {clicked} opens nothing")),
         );
         problems
     }
@@ -799,7 +799,53 @@ pub(crate) fn title_command_diagnostics(config: &AgentsSidebarConfig) -> Vec<Str
             title
                 .and_then(|title| title.popup.as_ref())
                 .into_iter()
-                .flat_map(AgentsTitlePopupConfig::problems),
+                .flat_map(|popup| {
+                    popup.problems("ui.sidebar.agents.title_command.popup", "the title")
+                }),
+        )
+        .collect()
+}
+
+/// Fork: `system_usage = { interval_seconds = 5, popup = { ... } }` in `[ui.sidebar.spaces]`:
+/// the machine's CPU and memory use at the right of the spaces header, which the server reads
+/// every `interval_seconds` (5 by default, as the tab bar's commands run, and with their limits)
+/// straight from the system, without starting a process. Only macOS reads them so far; elsewhere
+/// nothing shows. `popup` is what a click on them opens, as `title_command`'s `popup` does for
+/// the agents panel's title. An interval out of range hides them, with a warning (`problems`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SystemUsageConfig {
+    #[serde(default = "default_title_command_interval")]
+    pub interval_seconds: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub popup: Option<AgentsTitlePopupConfig>,
+}
+
+impl SystemUsageConfig {
+    /// What keeps the figures from showing; none when they can.
+    pub(crate) fn problems(&self) -> Vec<String> {
+        let max = super::MAX_TAB_BAR_COMMAND_INTERVAL_SECONDS;
+        match self.interval_seconds {
+            0 => vec!["interval_seconds must be at least 1".to_owned()],
+            seconds if seconds > max => vec![format!("interval_seconds may be at most {max}")],
+            _ => Vec::new(),
+        }
+    }
+}
+
+/// Fork: warnings for `[ui.sidebar.spaces] system_usage`, one per problem.
+pub(crate) fn system_usage_diagnostics(config: &SpacesSidebarConfig) -> Vec<String> {
+    let usage = config.system_usage.as_ref();
+    usage
+        .into_iter()
+        .flat_map(SystemUsageConfig::problems)
+        .map(|problem| format!("ui.sidebar.spaces.system_usage {problem}; hiding it"))
+        .chain(
+            usage
+                .and_then(|usage| usage.popup.as_ref())
+                .into_iter()
+                .flat_map(|popup| {
+                    popup.problems("ui.sidebar.spaces.system_usage.popup", "the system usage")
+                }),
         )
         .collect()
 }
@@ -897,6 +943,9 @@ pub struct SpacesSidebarConfig {
     #[serde(deserialize_with = "deserialize_sidebar_rows")]
     pub rows: SpaceSidebarRows,
     pub row_gap: u16,
+    /// Fork: the machine's CPU and memory use at the right of the header.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system_usage: Option<SystemUsageConfig>,
 }
 
 impl Default for SpacesSidebarConfig {
@@ -907,6 +956,7 @@ impl Default for SpacesSidebarConfig {
                 vec![SpaceSidebarToken::Branch, SpaceSidebarToken::GitStatus],
             ],
             row_gap: DEFAULT_SIDEBAR_ROW_GAP,
+            system_usage: None,
         }
     }
 }
@@ -921,6 +971,55 @@ pub struct SidebarConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn system_usage_reads_its_interval_and_popup_and_warns_about_mistakes() {
+        let config: crate::config::Config = toml::from_str(
+            r#"
+[ui.sidebar.spaces]
+system_usage = { interval_seconds = 3, popup = { command = "usage --details", title = "System", width = 60 } }
+"#,
+        )
+        .expect("config");
+        let spaces = &config.ui.sidebar.spaces;
+        let usage = spaces.system_usage.as_ref().expect("on");
+        assert_eq!(usage.interval_seconds, 3);
+        assert_eq!(
+            usage
+                .popup
+                .as_ref()
+                .and_then(AgentsTitlePopupConfig::usable)
+                .map(|popup| popup.command.as_str()),
+            Some("usage --details")
+        );
+        assert!(system_usage_diagnostics(spaces).is_empty());
+
+        let config: crate::config::Config =
+            toml::from_str("[ui.sidebar.spaces]\nsystem_usage = {}\n").expect("config");
+        let usage = config.ui.sidebar.spaces.system_usage.expect("on");
+        assert_eq!((usage.interval_seconds, usage.popup), (5, None));
+        assert_eq!(
+            SpacesSidebarConfig::default().system_usage,
+            None,
+            "off by default"
+        );
+
+        let config: crate::config::Config = toml::from_str(
+            r#"
+[ui.sidebar.spaces]
+system_usage = { interval_seconds = 0, popup = { command = " ", colour = "red" } }
+"#,
+        )
+        .expect("config");
+        assert_eq!(
+            system_usage_diagnostics(&config.ui.sidebar.spaces),
+            vec![
+                "ui.sidebar.spaces.system_usage interval_seconds must be at least 1; hiding it",
+                "unknown config key ui.sidebar.spaces.system_usage.popup.colour; ignoring key",
+                "ui.sidebar.spaces.system_usage.popup command is empty; a click on the system usage opens nothing",
+            ]
+        );
+    }
 
     #[test]
     fn defaults_match_the_compact_agent_and_existing_space_layouts() {

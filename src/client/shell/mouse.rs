@@ -941,6 +941,9 @@ impl ClientShellState {
                     }
                     MouseEventKind::Up(_) | MouseEventKind::Drag(_) | MouseEventKind::Moved => {}
                 }
+            } else if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                // Fork: a click on the title whose popup this is closes it again.
+                self.close_title_popup_at(point, outcome);
             }
             return;
         }
@@ -2059,6 +2062,12 @@ impl ClientShellState {
                 }
                 if super::contains(self.hits.agent_panel_title, point)
                     && self.open_agent_panel_title_popup(outcome)
+                {
+                    return;
+                }
+                // Fork: a click on the spaces header's system usage opens its popup.
+                if super::contains(self.hits.system_usage, point)
+                    && self.open_title_popup(super::title_popup::PopupTitle::SystemUsage, outcome)
                 {
                     return;
                 }

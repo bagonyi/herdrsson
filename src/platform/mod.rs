@@ -597,6 +597,34 @@ mod fallback;
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub use fallback::*;
 
+/// Fork: the machine's CPU and memory use at one moment (`system_usage_sample`), for the spaces
+/// header's `[ui.sidebar.spaces] system_usage`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SystemUsageSample {
+    /// All cores' time since boot in clock ticks, `[busy, all]`, wrapping at `u32::MAX`: a CPU
+    /// percentage is how much the first grew against the second since an earlier sample.
+    pub cpu_ticks: [u32; 2],
+    /// Memory in use as the system counts it (on macOS, Activity Monitor's Memory Used).
+    pub memory_used_bytes: u64,
+    pub memory_total_bytes: u64,
+    /// How hard the system finds it to hand out memory, where it says.
+    pub memory_pressure: Option<MemoryPressure>,
+}
+
+/// Fork: the system's memory pressure, as macOS grades it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MemoryPressure {
+    Normal,
+    Warning,
+    Critical,
+}
+
+/// Fork: only macOS reads the system usage so far.
+#[cfg(not(target_os = "macos"))]
+pub(crate) fn system_usage_sample() -> Option<SystemUsageSample> {
+    None
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn available_pane_shell_from_job(child_pid: u32, job: ForegroundJob) -> Option<String> {
     if job.process_group_id != child_pid

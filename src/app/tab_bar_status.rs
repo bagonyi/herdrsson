@@ -152,7 +152,8 @@ impl App {
     }
 
     pub(crate) fn handle_tab_bar_status_tasks(&mut self, now: std::time::Instant) -> bool {
-        let mut changed = false;
+        // Fork: the system usage reads on this timer too.
+        let mut changed = self.refresh_system_usage(now);
 
         if self
             .next_tab_bar_datetime_refresh
@@ -205,6 +206,7 @@ impl App {
             .filter(|runtime| runtime.task.is_none())
             .map(|runtime| runtime.next_run_at)
             .chain(self.next_tab_bar_datetime_refresh)
+            .chain(self.next_system_usage_deadline())
             .min()
     }
 

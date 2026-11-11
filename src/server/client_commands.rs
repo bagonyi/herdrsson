@@ -259,6 +259,11 @@ mod tests {
             actual.remove("tab.move_to_workspace").as_deref(),
             Some("c30ea11349ce65eec3d238dfd8f3ce5351768e33f381c06d4204de424ea2f633")
         );
+        // Fork: a click on the pill whose popup is open closes it.
+        assert_eq!(
+            actual.remove("popup.close").as_deref(),
+            Some("776d774a3cfd2da2ce9d937ac58549e6022f0c265832c67c7dd9bf300955d304")
+        );
 
         assert_eq!(
             actual, expected,

@@ -28,6 +28,8 @@ pub(super) fn snapshot() -> ClientShellSnapshot {
         agent_view_label: None,
         agent_panel_title: None,
         agent_panel_title_command_id: None,
+        system_usage: None,
+        system_usage_command_id: None,
         agent_order: Vec::new(),
         workspaces: vec![ClientShellWorkspace {
             workspace_id: "ws_1".into(),

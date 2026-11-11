@@ -26,6 +26,9 @@ pub(super) struct EndpointCommandRegistry {
     /// title invokes. It has no key, so it stays out of the command manifest; the snapshot names
     /// its id in `agent_panel_title_command_id` instead.
     title_popup: Option<EndpointCommand>,
+    /// Fork: `[ui.sidebar.spaces] system_usage`'s popup, which a click on the system usage
+    /// invokes, as `title_popup` is for the agents panel's title (`system_usage_command_id`).
+    system_usage_popup: Option<EndpointCommand>,
     namespace: String,
 }
 
@@ -51,6 +54,7 @@ impl EndpointCommandRegistry {
         Self {
             entries,
             title_popup: None,
+            system_usage_popup: None,
             namespace,
         }
     }
@@ -60,11 +64,30 @@ impl EndpointCommandRegistry {
         mut self,
         title_command: Option<&crate::config::AgentsTitleCommandConfig>,
     ) -> Self {
-        let popup = title_command
-            .and_then(|title| title.popup.as_ref())
-            .and_then(crate::config::AgentsTitlePopupConfig::usable);
-        self.title_popup = popup.map(|popup| EndpointCommand {
-            id: format!("cmd_{}_agent_panel_title", self.namespace),
+        let popup = title_command.and_then(|title| title.popup.as_ref());
+        self.title_popup = self.popup_command("agent_panel_title", popup);
+        self
+    }
+
+    /// Fork: add the system usage's popup, when it has a command.
+    pub(super) fn with_system_usage_popup(
+        mut self,
+        system_usage: Option<&crate::config::SystemUsageConfig>,
+    ) -> Self {
+        let popup = system_usage.and_then(|usage| usage.popup.as_ref());
+        self.system_usage_popup = self.popup_command("system_usage", popup);
+        self
+    }
+
+    /// Fork: a click's popup command, `name` in its id, none without a usable `popup`.
+    fn popup_command(
+        &self,
+        name: &str,
+        popup: Option<&crate::config::AgentsTitlePopupConfig>,
+    ) -> Option<EndpointCommand> {
+        let popup = popup.and_then(crate::config::AgentsTitlePopupConfig::usable);
+        popup.map(|popup| EndpointCommand {
+            id: format!("cmd_{}_{name}", self.namespace),
             binding: crate::config::CustomCommandKeybind {
                 bindings: crate::config::ActionKeybinds::default(),
                 label: String::new(),
@@ -76,8 +99,7 @@ impl EndpointCommandRegistry {
                 height: popup.height,
             },
             action: crate::protocol::ClientShellCommandAction::Popup,
-        });
-        self
+        })
     }
 }
 
@@ -108,6 +130,7 @@ impl App {
             .entries
             .iter()
             .chain(&self.endpoint_commands.title_popup)
+            .chain(&self.endpoint_commands.system_usage_popup)
             .find(|entry| entry.id == id)
             .map(|entry| entry.binding.clone())
     }
@@ -117,6 +140,15 @@ impl App {
     pub(crate) fn agent_panel_title_command_id(&self) -> Option<String> {
         self.endpoint_commands
             .title_popup
+            .as_ref()
+            .map(|entry| entry.id.clone())
+    }
+
+    /// Fork: the id a client invokes for a click on the system usage, none when
+    /// `system_usage` has no popup.
+    pub(crate) fn system_usage_command_id(&self) -> Option<String> {
+        self.endpoint_commands
+            .system_usage_popup
             .as_ref()
             .map(|entry| entry.id.clone())
     }
@@ -162,14 +194,18 @@ impl App {
             .as_ref()
             .map(|popup| popup.terminal_id.clone());
         let response = self.execute_custom_command_response(id, &binding, selected_text);
-        if self.agent_panel_title_command_id().as_deref() == Some(params.command_id.as_str()) {
+        let clicked = Some(params.command_id.as_str());
+        if self.agent_panel_title_command_id().as_deref() == clicked
+            || self.system_usage_command_id().as_deref() == clicked
+        {
             self.title_agent_panel_title_popup(popup_before, binding.description.as_deref());
         }
         response
     }
 
-    /// Fork: the agents panel title's popup shows its `title` in its frame, with a space either
-    /// side, once it has opened; one that was already open keeps its own.
+    /// Fork: the agents panel title's popup (and the system usage's) shows its `title` in its
+    /// frame, with a space either side, once it has opened; one that was already open keeps its
+    /// own.
     fn title_agent_panel_title_popup(
         &mut self,
         popup_before: Option<crate::terminal::TerminalId>,
@@ -733,6 +769,43 @@ mod tests {
             app.resolve_client_shell_command(&id).is_none(),
             "an old id goes with the popup"
         );
+    }
+
+    #[test]
+    fn the_system_usage_popup_has_an_id_of_its_own() {
+        let mut app = test_app();
+        let popup = |command: &str| crate::config::AgentsTitlePopupConfig {
+            command: command.into(),
+            title: Some("System".into()),
+            width: None,
+            height: None,
+            invalid: None,
+            unknown_keys: Vec::new(),
+        };
+        let title = crate::config::AgentsTitleCommandConfig {
+            command: "usage".into(),
+            interval_seconds: 30,
+            timeout_seconds: 10,
+            popup: Some(popup("usage --details")),
+        };
+        let usage = |command: Option<&str>| crate::config::SystemUsageConfig {
+            interval_seconds: 5,
+            popup: command.map(popup),
+        };
+        app.endpoint_commands = super::EndpointCommandRegistry::new(&[])
+            .with_title_popup(Some(&title))
+            .with_system_usage_popup(Some(&usage(Some("system-usage --details"))));
+        let id = app.system_usage_command_id().expect("the popup has an id");
+        assert_ne!(Some(&id), app.agent_panel_title_command_id().as_ref());
+        let popup = app.resolve_client_shell_command(&id).expect("it resolves");
+        assert_eq!(popup.command, "system-usage --details");
+        assert_eq!(popup.description.as_deref(), Some("System"));
+
+        for usage in [None, Some(usage(None)), Some(usage(Some(" ")))] {
+            app.endpoint_commands =
+                super::EndpointCommandRegistry::new(&[]).with_system_usage_popup(usage.as_ref());
+            assert_eq!(app.system_usage_command_id(), None);
+        }
     }
 
     #[test]

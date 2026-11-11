@@ -129,7 +129,8 @@ operations::define_operations! {
     PaneClearAgentAuthority(PaneClearAgentAuthorityParams) => "pane.clear_agent_authority", true, false;
     PaneReleaseAgent(PaneReleaseAgentParams) => "pane.release_agent", true, false;
     PaneClose(PaneTarget) => "pane.close", true, true;
-    PopupClose(EmptyParams) => "popup.close", true, false;
+    // Fork: a click on the pill whose popup is open closes it, so the window may send it.
+    PopupClose(EmptyParams) => "popup.close", true, true;
     EventsSubscribe(EventsSubscribeParams) => "events.subscribe", false, false;
     EventsWait(EventsWaitParams) => "events.wait", false, false;
     PaneWaitForOutput(PaneWaitForOutputParams) => "pane.wait_for_output", false, false;

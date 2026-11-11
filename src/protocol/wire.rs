@@ -951,12 +951,48 @@ pub struct ClientShellSnapshot {
     /// `title_command`'s popup; none without one. Optional, as `agent_panel_title` is.
     #[serde(default)]
     pub agent_panel_title_command_id: Option<String>,
+    /// Fork: the endpoint machine's CPU and memory use, for the spaces header; none while
+    /// `[ui.sidebar.spaces] system_usage` is off or they can't be read there. Optional, as
+    /// `agent_panel_title` is.
+    #[serde(default)]
+    pub system_usage: Option<ClientShellSystemUsage>,
+    /// Fork: the endpoint command a click on the system usage invokes, which opens
+    /// `system_usage`'s popup; none without one.
+    #[serde(default)]
+    pub system_usage_command_id: Option<String>,
     pub agent_order: Vec<String>,
     pub workspaces: Vec<ClientShellWorkspace>,
     pub tabs: Vec<ClientShellTab>,
     pub panes: Vec<ClientShellPane>,
     pub agents: Vec<ClientShellAgent>,
     pub commands: Vec<ClientShellCommand>,
+}
+
+/// Fork: the endpoint machine's CPU and memory use, read every `[ui.sidebar.spaces]
+/// system_usage` interval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientShellSystemUsage {
+    /// All cores' busy share since the reading before, none until there were two.
+    #[serde(default)]
+    pub cpu_percent: Option<u8>,
+    /// Memory in use as the system counts it (on macOS, Activity Monitor's Memory Used).
+    pub memory_used_bytes: u64,
+    pub memory_total_bytes: u64,
+    #[serde(default)]
+    pub memory_pressure: ClientShellMemoryPressure,
+}
+
+/// Fork: how hard the endpoint machine finds it to hand out memory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientShellMemoryPressure {
+    Normal,
+    Warning,
+    Critical,
+    /// The system doesn't say, or a later endpoint has a level this client doesn't know.
+    #[default]
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2827,6 +2863,8 @@ mod tests {
             agent_view_label: None,
             agent_panel_title: None,
             agent_panel_title_command_id: None,
+            system_usage: None,
+            system_usage_command_id: None,
             agent_order: Vec::new(),
             workspaces: vec![ClientShellWorkspace {
                 workspace_id: "w1".into(),
