@@ -521,6 +521,12 @@ uses the Herdr number.
   in the tab bar and before tab names in agent rows, and `keys.flag_tab` flags a tab with ⚑ to
   come back to. Together they replace the Tab Status plugin, so notifications no longer strip its
   markers.
+- 2026.11.12 (on Herdr 0.9.5): a Claude agent's row can show a cloud while Remote Control is
+  connected. The spaces header can show the machine's CPU and memory use, with a popup
+  (`system_usage`); a second click on a title's pill closes its popup, and a popup that fits
+  neither below nor above its title opens to its right. `keys.agent_switcher` lists the agents
+  latest visited first, as Cmd+Tab lists apps, and spaces can show waiting agents as a red dot,
+  or nothing (`unseen_indicator`).
 
 ## caveats
 
