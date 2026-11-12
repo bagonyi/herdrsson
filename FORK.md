@@ -110,6 +110,9 @@ through `title_command`.
   blocked with an open question), like an app badge. A folded group's header shows the total of
   its spaces, and a folded worktree parent counts its linked worktrees. In the collapsed sidebar
   a waiting space's number turns red. With SSH machines, a folded machine shows its total.
+  `[ui.sidebar.spaces] unseen_indicator = "dot"` shows a red `●` in place of the count (the
+  collapsed sidebar's number in red letters instead of on red), and `"off"` shows nothing;
+  `"count"` is the default.
 - A finished agent counts as looked at only once its pane has stayed on screen in the focused
   window for a second (the `seen_delay_ms` setting). Skipping past its tab on the way to another,
   or switching windows sooner, leaves it waiting for you: its red count, the tab bar's arrows and

@@ -31,7 +31,7 @@ pub use self::{
     sidebar::{
         AgentSidebarToken, AgentsSidebarConfig, AgentsTitleCommandConfig, AgentsTitlePopupConfig,
         OlderAgentsConfig, SidebarConfig, SidebarTokenFormat, SidebarTokenStyle, SpaceSidebarToken,
-        SpacesSidebarConfig, SystemUsageConfig,
+        SpacesSidebarConfig, SystemUsageConfig, UnseenIndicator,
     },
     sound::SoundConfig,
     tab_bar::TabBarRightEntryConfig,

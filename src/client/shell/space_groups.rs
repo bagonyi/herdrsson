@@ -609,7 +609,8 @@ pub(super) fn render_header(
     // Unfolded, the members show their own counts.
     let unseen = if folded.is_some() { unseen } else { 0 };
     // Leave the last two columns free, as space rows do, or the count's.
-    let badge = super::unseen_counts::badge_width(unseen);
+    let indicator = config.spaces.unseen_indicator;
+    let badge = super::unseen_counts::badge_width(unseen, indicator);
     let (y, right) = (rect.y, rect.right().saturating_sub(badge.max(2)));
     let chevron = if folded.is_some() { "▸ " } else { "▾ " };
     let mut x = put_segment(buffer, rect.x.saturating_add(1), y, right, chevron, style);
@@ -621,7 +622,7 @@ pub(super) fn render_header(
     }
     let name_text = crate::ui::truncate_end(name, usize::from(right.saturating_sub(x)));
     put_segment(buffer, x, y, right, &name_text, style);
-    super::unseen_counts::render_badge(buffer, rect, rect.right(), unseen, palette);
+    super::unseen_counts::render_badge(buffer, rect, rect.right(), unseen, indicator, palette);
     GroupHeaderHit {
         rect,
         group: name.to_owned(),

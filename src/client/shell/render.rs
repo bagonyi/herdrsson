@@ -312,6 +312,7 @@ pub(super) fn render_shell(
                 &super::unseen_counts::UnseenCounts::of_endpoint(
                     state.endpoints,
                     state.active_endpoint_id,
+                    config.spaces.unseen_indicator,
                 ),
                 &mut hits,
             );

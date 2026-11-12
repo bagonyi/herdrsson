@@ -68,7 +68,7 @@ pub(super) fn render_collapsed(
         let rect = Rect::new(workspace_area.x, y, workspace_area.width, 1);
         let active = &endpoint.endpoint_id == state.active_endpoint_id;
         let collapsed = state.collapsed_endpoints.contains(&endpoint.endpoint_id);
-        let unseen = UnseenCounts::of(endpoint);
+        let unseen = UnseenCounts::of(endpoint, config.spaces.unseen_indicator);
         if skip > 0 {
             skip -= 1;
         } else {
@@ -95,19 +95,11 @@ pub(super) fn render_collapsed(
             );
             let mut status_badge = Rect::default();
             let waiting = if collapsed { unseen.total() } else { 0 };
-            if waiting > 0 && endpoint.endpoint_id.is_local() {
-                let count = if waiting > 9 {
-                    "9+".to_owned()
-                } else {
-                    waiting.to_string()
-                };
-                put_right_text(
-                    buffer,
-                    rect,
-                    rect.y,
-                    &count,
-                    unseen_counts::badge_style(palette),
-                );
+            let badge =
+                unseen_counts::compact_badge(waiting, config.spaces.unseen_indicator, palette)
+                    .filter(|_| endpoint.endpoint_id.is_local());
+            if let Some((count, style)) = badge {
+                put_right_text(buffer, rect, rect.y, &count, style);
             } else if !endpoint.endpoint_id.is_local() {
                 let (glyph, _, color) = endpoint_status_presentation(endpoint.status, palette);
                 let width = display_width(glyph).min(rect.width);
@@ -175,23 +167,23 @@ pub(super) fn render_collapsed(
             } else {
                 Modifier::empty()
             };
-            let waiting = unseen.own(&workspace.workspace_id);
+            let number_style = Style::default()
+                .fg(if focused && !stale {
+                    palette.text
+                } else {
+                    palette.overlay0
+                })
+                .add_modifier(dim);
             put_text(
                 buffer,
                 rect.x,
                 rect.y,
                 number_width,
                 &number,
-                if waiting > 0 && !stale {
-                    unseen_counts::badge_style(palette)
+                if stale {
+                    number_style
                 } else {
-                    Style::default()
-                        .fg(if focused && !stale {
-                            palette.text
-                        } else {
-                            palette.overlay0
-                        })
-                        .add_modifier(dim)
+                    unseen.number_style(&workspace.workspace_id, number_style, palette)
                 },
             );
             put_text(
@@ -424,7 +416,7 @@ pub(super) fn render_expanded(
     let unseen = state
         .endpoints
         .iter()
-        .map(UnseenCounts::of)
+        .map(|endpoint| UnseenCounts::of(endpoint, config.spaces.unseen_indicator))
         .collect::<Vec<_>>();
     let mut y = body.y;
     for (row_index, row) in rows.iter().enumerate().skip(*state.workspace_scroll) {
@@ -445,6 +437,7 @@ pub(super) fn render_expanded(
                         .get(*index)
                         .filter(|_| collapsed)
                         .map_or(0, UnseenCounts::total),
+                    config.spaces.unseen_indicator,
                     endpoint,
                     collapsed && &endpoint.endpoint_id == state.active_endpoint_id,
                     state.machine_diagnostics,
@@ -516,7 +509,7 @@ pub(super) fn render_expanded(
                     selected,
                     state.selected_workspace_id.is_some(),
                     false,
-                    unseen_counts::text_end(rect, waiting, || {
+                    unseen_counts::text_end(rect, waiting, config.spaces.unseen_indicator, || {
                         super::sidebar::parent_group_key(snapshot, entry.index).is_some()
                     }),
                     palette,
@@ -542,6 +535,7 @@ pub(super) fn render_expanded(
                     rect,
                     group_toggle.is_some(),
                     waiting,
+                    config.spaces.unseen_indicator,
                     palette,
                 );
                 hits.workspaces.push(WorkspaceHit {
@@ -640,6 +634,7 @@ fn render_endpoint_row(
     rect: Rect,
     marker: &str,
     unseen: usize,
+    indicator: crate::config::UnseenIndicator,
     endpoint: &ClientShellEndpoint,
     highlighted: bool,
     auth: &super::machine_diagnostics::MachineDiagnostics,
@@ -666,7 +661,7 @@ fn render_endpoint_row(
         format!("{glyph} {state}")
     };
     let signal_width = display_width(&signal).min(rect.width);
-    let unseen_width = unseen_counts::badge_width(unseen).min(rect.width);
+    let unseen_width = unseen_counts::badge_width(unseen, indicator).min(rect.width);
     let right_width = signal_width
         .saturating_add(unseen_width)
         .saturating_add(u16::from(signal_width > 0 && unseen_width > 0));
@@ -699,6 +694,7 @@ fn render_endpoint_row(
         rect.right()
             .saturating_sub(right_width.saturating_sub(unseen_width)),
         unseen,
+        indicator,
         palette,
     );
     Rect::new(

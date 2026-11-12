@@ -340,7 +340,8 @@ pub(crate) fn render_sidebar(
         .saturating_sub(metrics.offset_from_bottom);
     let show_scrollbar = metrics.max_offset_from_bottom > 0 && body.width > 1;
     let content_width = body.width.saturating_sub(u16::from(show_scrollbar));
-    let unseen = UnseenCounts::of_endpoint(state.endpoints, state.active_endpoint_id);
+    let indicator = config.spaces.unseen_indicator;
+    let unseen = UnseenCounts::of_endpoint(state.endpoints, state.active_endpoint_id, indicator);
     let group_unseen = space_groups::unseen_by_group(snapshot, &unseen);
     let mut y = body.y;
     for (row_position, row) in sidebar_rows
@@ -397,7 +398,7 @@ pub(crate) fn render_sidebar(
             selected,
             state.selected_workspace_id.is_some(),
             dragged,
-            unseen_counts::text_end(rect, waiting, || {
+            unseen_counts::text_end(rect, waiting, indicator, || {
                 parent_group_key(snapshot, entry.index).is_some()
             }),
             palette,
@@ -411,7 +412,14 @@ pub(crate) fn render_sidebar(
             state.collapsed_groups,
             palette,
         );
-        unseen_counts::render_space_badge(buffer, rect, group_toggle.is_some(), waiting, palette);
+        unseen_counts::render_space_badge(
+            buffer,
+            rect,
+            group_toggle.is_some(),
+            waiting,
+            indicator,
+            palette,
+        );
         hits.workspaces.push(WorkspaceHit {
             rect,
             endpoint_id: ClientEndpointId::Local,

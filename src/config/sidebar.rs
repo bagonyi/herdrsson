@@ -946,6 +946,26 @@ pub struct SpacesSidebarConfig {
     /// Fork: the machine's CPU and memory use at the right of the header.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_usage: Option<SystemUsageConfig>,
+    /// Fork: how a space shows the agents waiting for the user there.
+    pub unseen_indicator: UnseenIndicator,
+}
+
+/// Fork: `unseen_indicator`, how a space row, a folded group's header and a folded machine show
+/// the agents waiting for the user (finished and not looked at, or asking a question).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UnseenIndicator {
+    /// ` 3 ` on red at the row's right edge, like an app badge; the collapsed sidebar's space
+    /// number on red.
+    #[default]
+    #[serde(alias = "counts")]
+    Count,
+    /// A red `●` where the count would be; the collapsed sidebar's space number in red.
+    #[serde(alias = "dots")]
+    Dot,
+    /// Nothing.
+    #[serde(alias = "none")]
+    Off,
 }
 
 impl Default for SpacesSidebarConfig {
@@ -957,6 +977,7 @@ impl Default for SpacesSidebarConfig {
             ],
             row_gap: DEFAULT_SIDEBAR_ROW_GAP,
             system_usage: None,
+            unseen_indicator: UnseenIndicator::Count,
         }
     }
 }
@@ -1019,6 +1040,35 @@ system_usage = { interval_seconds = 0, popup = { command = " ", colour = "red" }
                 "ui.sidebar.spaces.system_usage.popup command is empty; a click on the system usage opens nothing",
             ]
         );
+    }
+
+    #[test]
+    fn unseen_indicator_reads_count_dot_and_off() {
+        assert_eq!(
+            SpacesSidebarConfig::default().unseen_indicator,
+            UnseenIndicator::Count
+        );
+        for (value, indicator) in [
+            ("count", UnseenIndicator::Count),
+            ("counts", UnseenIndicator::Count),
+            ("dot", UnseenIndicator::Dot),
+            ("dots", UnseenIndicator::Dot),
+            ("off", UnseenIndicator::Off),
+            ("none", UnseenIndicator::Off),
+        ] {
+            let config: crate::config::Config = toml::from_str(&format!(
+                "[ui.sidebar.spaces]\nunseen_indicator = \"{value}\"\n"
+            ))
+            .expect("config");
+            assert_eq!(
+                config.ui.sidebar.spaces.unseen_indicator, indicator,
+                "{value}"
+            );
+        }
+        assert!(toml::from_str::<crate::config::Config>(
+            "[ui.sidebar.spaces]\nunseen_indicator = \"badge\"\n"
+        )
+        .is_err());
     }
 
     #[test]

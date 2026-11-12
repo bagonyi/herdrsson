@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::client::endpoint::{ClientEndpointStatus, ProfileId, SavedSshEndpoint};
+use crate::config::UnseenIndicator;
 
 fn waiting_agent(workspace_id: &str, pane_id: &str, status: AgentStatus) -> ClientShellAgent {
     ClientShellAgent {
@@ -701,4 +702,225 @@ fn the_narrow_multi_machine_sidebar_shows_red_space_numbers_and_folded_counts() 
         None,
         "a remote machine keeps its status badge"
     );
+}
+
+/// The columns of `row`'s first line holding a red `●`: where `dot` drew.
+fn red_dots(buffer: &Buffer, palette: &Palette, row: Rect) -> Vec<u16> {
+    (row.x..row.right())
+        .filter(|x| {
+            let cell = &buffer[(*x, row.y)];
+            cell.symbol() == "●" && cell.fg == palette.red
+        })
+        .collect()
+}
+
+#[test]
+fn the_dot_style_draws_a_red_dot_where_the_count_would_be() {
+    let long = "a-space-name-far-too-long-for-the-sidebar";
+    // `ws_3` is a worktree parent (with a ▾) of `ws_4`.
+    let mut projected = named_spaces(&[long, long, long, "child"]);
+    in_worktree(&mut projected, 3, false);
+    in_worktree(&mut projected, 4, true);
+    let projected = focused_on(projected, "ws_4");
+    let mut before = grouped_state(projected.clone());
+    before.config.spaces.unseen_indicator = UnseenIndicator::Dot;
+    let plain = render(&mut before);
+    let waiting = times("ws_1", 1)
+        .chain(times("ws_3", 12))
+        .collect::<Vec<_>>();
+    let mut state = grouped_state(with_waiting(projected, &waiting));
+    state.config.spaces.unseen_indicator = UnseenIndicator::Dot;
+    let buffer = render(&mut state);
+    let palette = &state.config.palette;
+
+    // In the columns a one-digit count takes: ` ● ` at the right edge, or left of the ▾.
+    for (workspace_id, end) in [("ws_1", 0), ("ws_3", 2)] {
+        let row = space_rect(&state, workspace_id);
+        assert_eq!(red_count(&buffer, palette, row), None, "no red background");
+        let dot = row.right() - end - 2;
+        assert_eq!(
+            red_dots(&buffer, palette, row),
+            vec![dot],
+            "{workspace_id}: {:?}",
+            line(&buffer, row)
+        );
+        let name = line(&buffer, Rect::new(row.x, row.y, dot - 1 - row.x, 1));
+        assert!(
+            name.contains(" a-space-name") && name.ends_with('…'),
+            "{workspace_id}: {:?}",
+            line(&buffer, row)
+        );
+    }
+    for workspace_id in ["ws_2", "ws_4"] {
+        let row = space_rect(&state, workspace_id);
+        assert_eq!(
+            cells(&buffer, row),
+            cells(&plain, space_rect(&before, workspace_id)),
+            "{workspace_id}"
+        );
+    }
+}
+
+#[test]
+fn the_dot_style_marks_a_folded_header_and_turns_rail_numbers_red() {
+    let mut state = grouped_state(with_waiting(
+        focused_on(named_spaces(&["A/one", "A/two", "plain"]), "ws_3"),
+        &["ws_1", "ws_2", "ws_2"],
+    ));
+    state.config.spaces.unseen_indicator = UnseenIndicator::Dot;
+    state.collapsed_groups.insert("group:A".into());
+    let buffer = render(&mut state);
+    let palette = state.config.palette.clone();
+    let header = header_rect(&state, "A");
+    assert_eq!(red_count(&buffer, &palette, header), None);
+    assert_eq!(
+        red_dots(&buffer, &palette, header),
+        vec![header.right() - 2],
+        "{:?}",
+        line(&buffer, header)
+    );
+
+    // The rail lists `one`, `two`, `plain`; `plain` is focused.
+    state.sidebar_collapsed = true;
+    let buffer = render(&mut state);
+    for (workspace_id, waiting) in [("ws_1", true), ("ws_2", true), ("ws_3", false)] {
+        let row = space_rect(&state, workspace_id);
+        let cell = &buffer[(row.x, row.y)];
+        assert_ne!(cell.bg, palette.red, "{workspace_id}");
+        assert_eq!(cell.fg == palette.red, waiting, "{workspace_id}");
+        if waiting {
+            assert!(cell.modifier.contains(Modifier::BOLD));
+        }
+    }
+}
+
+#[test]
+fn off_draws_no_indicator_and_leaves_names_their_columns() {
+    let long = "a-space-name-far-too-long-for-the-sidebar";
+    let (one, two) = (format!("A/{long}"), format!("A/{long}-2"));
+    let mut state = grouped_state(with_waiting(
+        focused_on(named_spaces(&[&one, &two, long, "plain"]), "ws_4"),
+        &["ws_1", "ws_2", "ws_2", "ws_3"],
+    ));
+    state.config.spaces.unseen_indicator = UnseenIndicator::Off;
+    let palette = state.config.palette.clone();
+    let unmarked = |buffer: &Buffer, row: Rect| {
+        red_count(buffer, &palette, row).is_none() && red_dots(buffer, &palette, row).is_empty()
+    };
+
+    let buffer = render(&mut state);
+    for workspace_id in ["ws_1", "ws_2", "ws_3"] {
+        let row = space_rect(&state, workspace_id);
+        assert!(
+            unmarked(&buffer, row),
+            "{workspace_id}: {:?}",
+            line(&buffer, row)
+        );
+        assert_eq!(
+            buffer[(row.right() - 3, row.y)].symbol(),
+            "…",
+            "cut off where a row without waiting agents is: {:?}",
+            line(&buffer, row)
+        );
+    }
+
+    state.collapsed_groups.insert("group:A".into());
+    let buffer = render(&mut state);
+    let header = header_rect(&state, "A");
+    assert!(unmarked(&buffer, header), "{:?}", line(&buffer, header));
+
+    state.sidebar_collapsed = true;
+    let buffer = render(&mut state);
+    for workspace_id in ["ws_1", "ws_2", "ws_3"] {
+        let row = space_rect(&state, workspace_id);
+        let cell = &buffer[(row.x, row.y)];
+        assert!(
+            cell.fg != palette.red && cell.bg != palette.red,
+            "{workspace_id}'s number"
+        );
+    }
+}
+
+#[test]
+fn the_dot_style_on_machines() {
+    let (mut state, remote) = with_remote(with_waiting(snapshot(), &["ws_1"]), &["ws_1"]);
+    state.config.spaces.unseen_indicator = UnseenIndicator::Dot;
+    let palette = state.config.palette.clone();
+
+    state.collapsed_endpoints.insert(remote.clone());
+    let buffer = render(&mut state);
+    let space = machine_space_rect(&state, &ClientEndpointId::Local);
+    assert_eq!(red_dots(&buffer, &palette, space), vec![space.right() - 2]);
+    let machine = machine_rect(&state, &remote);
+    assert_eq!(red_count(&buffer, &palette, machine), None);
+    let dots = red_dots(&buffer, &palette, machine);
+    let text = line(&buffer, machine);
+    assert_eq!(dots.len(), 1, "a folded machine shows one dot: {text:?}");
+    assert!(
+        text.trim_end().ends_with('●') && dots[0] < machine.right() - 1,
+        "the status badge stays rightmost: {text:?}"
+    );
+
+    // The narrow sidebar: red numbers, and a folded machine's dot.
+    state.sidebar_collapsed = true;
+    state.collapsed_endpoints.clear();
+    let buffer = render(&mut state);
+    for row in [
+        machine_space_rect(&state, &ClientEndpointId::Local),
+        machine_space_rect(&state, &remote),
+    ] {
+        let digit = &buffer[(row.x + 1, row.y)];
+        assert_eq!((digit.fg, digit.bg == palette.red), (palette.red, false));
+    }
+    state.collapsed_endpoints.insert(ClientEndpointId::Local);
+    let buffer = render(&mut state);
+    let local = machine_rect(&state, &ClientEndpointId::Local);
+    assert_eq!(red_count(&buffer, &palette, local), None);
+    assert_eq!(
+        red_dots(&buffer, &palette, local).len(),
+        1,
+        "{:?}",
+        line(&buffer, local)
+    );
+}
+
+#[test]
+fn hovered_rows_and_drop_target_headers_keep_their_red_dots() {
+    let mut state = grouped_state(with_waiting(
+        focused_on(named_spaces(&["A/one", "A/two", "plain", "other"]), "ws_4"),
+        &["ws_2", "ws_3"],
+    ));
+    state.config.spaces.unseen_indicator = UnseenIndicator::Dot;
+    state.collapsed_groups.insert("group:A".into());
+    render(&mut state);
+    let palette = state.config.palette.clone();
+    let plain = space_rect(&state, "ws_3");
+    let header = header_rect(&state, "A");
+    let hover =
+        crate::client::shell::row_hover::sidebar_hover_background(&palette).expect("an RGB theme");
+    for row in [plain, header] {
+        state.handle_raw_events(vec![RawInputEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: row.x + 4,
+            row: row.y,
+            modifiers: KeyModifiers::NONE,
+        })]);
+        let buffer = render(&mut state);
+        let dot = row.right() - 2;
+        assert_eq!(red_dots(&buffer, &palette, row), vec![dot]);
+        assert_eq!(buffer[(dot, row.y)].bg, hover, "lit under the dot too");
+    }
+    state.clear_row_hover();
+
+    let point = drag_space(&mut state, "ws_3", header.y);
+    assert_eq!(
+        group_target(&state),
+        Some(&GroupDropTarget::Header("A".into()))
+    );
+    let buffer = render(&mut state);
+    assert_eq!(
+        red_dots(&buffer, &palette, header),
+        vec![header.right() - 2]
+    );
+    release(&mut state, point);
 }
