@@ -390,7 +390,7 @@ pub(super) fn agent_list_gaps(
 }
 
 /// Fork: the line above the first older agent, its text in the middle: `──── earlier ────`.
-fn render_older_divider(
+pub(super) fn render_older_divider(
     buffer: &mut Buffer,
     x: u16,
     y: u16,

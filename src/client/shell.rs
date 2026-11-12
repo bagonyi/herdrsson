@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 mod actions;
 mod agent_sidebar;
+// Fork: the agent switcher (`keys.agent_switcher`).
+mod agent_switcher;
 mod aggregate_navigation;
 mod machine_diagnostics;
 mod workspace_navigation;

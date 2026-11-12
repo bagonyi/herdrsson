@@ -92,10 +92,12 @@ fn push_host_theme_update(
 
 impl ClientShellState {
     pub(crate) fn host_keyboard_report_all_requested(&self) -> bool {
+        // Fork: the agent switcher closes when its modifier is let go, which only a host
+        // reporting every key reports.
         matches!(
             self.mode,
             ClientShellMode::Prefix | ClientShellMode::Navigate
-        )
+        ) || self.agent_switcher.is_some()
     }
 
     pub(crate) fn set_host_reports_key_releases(&mut self, reports: bool) {
@@ -120,6 +122,7 @@ impl ClientShellState {
             || key.kind != KeyEventKind::Press
             || self.mode != ClientShellMode::Terminal
             || self.overlay.is_some()
+            || self.agent_switcher.is_some()
         {
             return None;
         }
@@ -327,6 +330,7 @@ impl ClientShellState {
                         .push(ClientMessage::ClientShellFocus { focused: true });
                 }
                 RawInputEvent::OuterFocusLost => {
+                    outcome.repaint |= self.cancel_agent_switcher();
                     outcome.repaint |= self.clear_link_hover();
                     outcome.repaint |= self.clear_row_hover();
                     self.outer_focused = Some(false);
@@ -420,6 +424,8 @@ impl ClientShellState {
                 self.execute_repeat_plan(lease_key, key, plan, outcome);
             }
             KeyEventKind::Release => {
+                // Fork: letting go of the agent switcher's modifier switches.
+                self.agent_switcher_key_release(&key, outcome);
                 let Some(lease) = self.take_release_lease(&lease_key, &key) else {
                     return;
                 };
@@ -615,6 +621,10 @@ impl ClientShellState {
         key: &crate::input::TerminalKey,
         outcome: &mut ClientShellInput,
     ) -> Option<ClientInputTarget> {
+        // Fork: the agent switcher's keys, and its own key that opens it.
+        if self.route_agent_switcher_key(key, outcome) {
+            return None;
+        }
         if self.handle_modal_paste_shortcut_with(key, outcome, crate::platform::read_clipboard_text)
         {
             return None;
@@ -1087,6 +1097,7 @@ impl ClientShellState {
                 .selection
                 .as_ref()
                 .is_some_and(crate::selection::Selection::is_visible),
+            agent_switcher: self.agent_switcher.is_some(),
         }
     }
 

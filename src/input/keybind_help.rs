@@ -151,6 +151,7 @@ pub(crate) fn keybind_help_groups(
                 entry(binding_label(&keybinds.previous_agent), "previous agent"),
                 entry(binding_label(&keybinds.next_agent), "next agent"),
                 entry(indexed_label(&keybinds.focus_agent), "focus agent 1-9"),
+                entry(binding_label(&keybinds.agent_switcher), "agent switcher"),
                 entry(binding_label(&keybinds.new_tab), "new tab"),
                 entry(binding_label(&keybinds.rename_tab), "rename tab"),
                 entry(binding_label(&keybinds.previous_tab), "previous tab"),

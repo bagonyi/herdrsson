@@ -298,6 +298,20 @@ through `title_command`.
   machines). Press it again to come back. Each space remembers its own last tab; closed tabs and
   spaces, and machines that aren't online, are skipped. Both work in zen mode and are listed in
   the help overlay. Both are unset by default.
+- `agent_switcher` (unset by default, e.g. `"alt+tab"`) switches between agents as Cmd+Tab
+  switches apps. Hold Alt and press Tab: a popup in the middle of the window lists every agent,
+  the one in front first, then the others by when you last had them in front, then any you
+  haven't been to yet in the agents panel's order, each drawn as the agents panel draws it. Each
+  Tab moves down and Shift+Tab (or ↑) back, and letting go of Alt switches to the highlighted
+  agent's space, tab and pane, on any machine. So a quick press goes back to the agent you had
+  before, and another comes back. Alt+Shift+Tab opens it on the last agent, going backwards, as
+  Cmd+Shift+Tab does, so Shift+Tab never reaches the pane. Esc cancels; Enter or a click switches
+  too, and pointing at an agent or the wheel moves the highlight. While it's open the
+  window asks the terminal to report every key, so it sees Alt let go (the kitty keyboard
+  protocol, as Ghostty, Kitty and WezTerm speak it); without that, the next key after letting go
+  switches. Bound after the prefix key, it stays open until Enter or Esc. The window remembers
+  the order from when it opens, so a reopened window starts from the agents panel's order. It's
+  listed in the help overlay.
 - `zen_mode` shows the focused pane alone, centred at `zen_width` columns (150 by default, at
   least 40, its frame and scrollbar included), with the sidebar, the tab bar and agent
   notifications hidden. Only the same key turns it off. It zooms each tab it shows, again after a
@@ -372,6 +386,8 @@ last_tab = "alt+q"
 last_workspace = "alt+w"
 # Flags the focused tab with ⚑ to come back to, or takes the flag off.
 flag_tab = "cmd+shift+f"
+# Agents latest visited first, as Cmd+Tab lists apps: hold Alt, press Tab, let go to switch.
+agent_switcher = "alt+tab"
 # The focused pane alone, centred, until pressed again.
 zen_mode = "prefix+shift+z"
 # Narrower and wider, only in zen mode; outside it these keys reach the pane.

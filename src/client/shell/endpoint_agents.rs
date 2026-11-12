@@ -134,14 +134,14 @@ impl ClientShellState {
     }
 }
 
-struct EndpointAgentRow {
-    endpoint_id: ClientEndpointId,
+pub(super) struct EndpointAgentRow {
+    pub(super) endpoint_id: ClientEndpointId,
     machine_label: String,
-    stale: bool,
-    agent: super::agent_sidebar::AgentRow,
+    pub(super) stale: bool,
+    pub(super) agent: super::agent_sidebar::AgentRow,
 }
 
-fn agent_rows(
+pub(super) fn agent_rows(
     endpoints: &[ClientShellEndpoint],
     active_endpoint_id: &ClientEndpointId,
     config: &ClientShellConfig,

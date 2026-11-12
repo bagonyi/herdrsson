@@ -62,6 +62,9 @@ fn fast_path_blocker(
         Some("client_surface_patch.fallback.mode")
     } else if state.overlay.is_some() {
         Some("client_surface_patch.fallback.overlay")
+    } else if state.agent_switcher.is_some() {
+        // Fork: the agent switcher covers panes, so their output must not be drawn over it.
+        Some("client_surface_patch.fallback.agent_switcher")
     } else if state.endpoint_error.is_some() {
         Some("client_surface_patch.fallback.endpoint_error")
     } else if state.config_diagnostic.is_some() {

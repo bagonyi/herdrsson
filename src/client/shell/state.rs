@@ -810,6 +810,8 @@ pub(super) struct ClientInputContext {
     pub(super) popup_terminal_id: Option<String>,
     pub(super) popup_pending: bool,
     pub(super) retained_selection: bool,
+    /// Fork: the agent switcher is open, so a key held as it opens doesn't repeat into it.
+    pub(super) agent_switcher: bool,
 }
 
 type ClientInputLeases = crate::input::InputLeaseTable<u8, ClientInputContext, ClientInputTarget>;
@@ -959,6 +961,9 @@ pub(crate) struct ClientShellState {
     pub(super) previous_pane_id: Option<String>,
     pub(super) zen: super::zen::ZenMode,
     pub(super) recent_focus: super::recent_focus::RecentFocusHistory,
+    /// Fork: the agents the window has focused, and the open agent switcher (`agent_switcher.rs`).
+    pub(super) agent_visits: super::agent_switcher::AgentVisitHistory,
+    pub(super) agent_switcher: Option<super::agent_switcher::AgentSwitcher>,
     pub(super) pane_mouse_gesture: Option<ClientPaneMouseGesture>,
     pub(super) link_hover: Option<super::link_hover::LinkHover>,
     pub(super) row_hover: Option<(u16, u16)>,
@@ -1142,6 +1147,8 @@ impl ClientShellState {
             previous_pane_id: None,
             zen: super::zen::ZenMode::new(preferences.zen_width, preferences.zen_zooms),
             recent_focus: Default::default(),
+            agent_visits: Default::default(),
+            agent_switcher: None,
             pane_mouse_gesture: None,
             link_hover: None,
             row_hover: None,
@@ -1672,6 +1679,7 @@ impl ClientShellState {
         }
         self.snapshot = Some(snapshot);
         self.note_recent_focus();
+        self.note_agent_visit();
         self.reconcile_pending_workspace_highlight();
         let pending_surface = self.pending_pane_surface.take();
         if let Some(surface) = pending_surface {

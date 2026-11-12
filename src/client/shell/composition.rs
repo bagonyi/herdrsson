@@ -718,6 +718,14 @@ impl ClientShellState {
             };
             frame.replace_from_ratatui_buffer_preserving_effects(&composed, cursor);
         }
+        // Fork: the agent switcher (`agent_switcher.rs`), over everything else.
+        if self.agent_switcher.is_some() {
+            let mut composed = frame.to_ratatui_buffer()?;
+            if let Some(area) = self.render_agent_switcher(&mut composed) {
+                occlusion.cover(area);
+            }
+            frame.replace_from_ratatui_buffer_preserving_effects(&composed, None);
+        }
         if let Some(ClientShellOverlay::Help(help)) = self.overlay.as_mut() {
             help.scroll = help.scroll.min(self.hits.help_max_scroll);
         }

@@ -441,6 +441,9 @@ pub struct KeysConfig {
     /// Fork: flag the focused tab to come back to (`⚑ ` before its name), or unflag it. Unset by
     /// default.
     pub flag_tab: BindingConfig,
+    /// Fork: open the agent switcher, agents latest visited first; held with Alt, letting go of it
+    /// switches. Unset by default.
+    pub agent_switcher: BindingConfig,
     /// Split pane vertically (side by side). Default: "prefix+v"
     pub split_vertical: BindingConfig,
     /// Split pane horizontally (stacked). Default: "prefix+minus"
@@ -592,6 +595,8 @@ pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     flag_tab: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    agent_switcher: Option<BindingConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     split_vertical: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     split_horizontal: Option<BindingConfig>,
@@ -722,6 +727,7 @@ impl<'de> Deserialize<'de> for KeysConfig {
         apply_field!(last_tab);
         apply_field!(last_workspace);
         apply_field!(flag_tab);
+        apply_field!(agent_switcher);
         apply_field!(split_vertical);
         apply_field!(split_horizontal);
         apply_field!(close_pane);
@@ -833,6 +839,7 @@ impl KeysConfig {
         copy_effective_action_field!(last_tab, keybinds.last_tab);
         copy_effective_action_field!(last_workspace, keybinds.last_workspace);
         copy_effective_action_field!(flag_tab, keybinds.flag_tab);
+        copy_effective_action_field!(agent_switcher, keybinds.agent_switcher);
         copy_effective_action_field!(split_vertical, keybinds.split_vertical);
         copy_effective_action_field!(split_horizontal, keybinds.split_horizontal);
         copy_effective_action_field!(close_pane, keybinds.close_pane);
@@ -1234,6 +1241,7 @@ impl Default for KeysConfig {
             last_tab: BindingConfig::empty(),
             last_workspace: BindingConfig::empty(),
             flag_tab: BindingConfig::empty(),
+            agent_switcher: BindingConfig::empty(),
             split_vertical: BindingConfig::one("prefix+v"),
             split_horizontal: BindingConfig::one("prefix+minus"),
             close_pane: BindingConfig::one("prefix+x"),
