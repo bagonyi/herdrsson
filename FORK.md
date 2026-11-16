@@ -25,11 +25,13 @@ Only the window knows about groups. The server, the API and the saved session ke
 and their own order, so nothing else changes: stock Herdr just shows `Web/blog` as the
 space's name. If Herdr ever gets groups of its own, this fork will drop these and use them.
 
-![Herdrsson with its spaces in the groups Acme, Blog and a folded Oss, red counts of waiting agents, the agents counted by status and Claude's weekly usage in the agents panel's title, and the agents panel listed by last activity, each agent on three lines with the time since then, its context's size, its prompt cache's time left and, for three of them, a robot icon with the number of subagents at work and a prompt icon with the number of background shells, the two idle for hours on one line each under an earlier line, next to a real Claude whose status line shows the same size and time left as its row](assets/fork-screenshot.png)
+![Herdrsson with its spaces in the groups Acme, Blog and a folded Oss, red dots for waiting agents and the Mac's CPU and memory use in the spaces header, status marks before the tab names and a red flag on the tests tab, the agents counted by status and Claude's weekly usage in the agents panel's title, and the agents panel listed by last activity, each agent on three lines with the time since then, its context's size, its prompt cache's time left and, for three of them, a robot icon with the number of subagents at work and a prompt icon with the number of background shells, a cloud on the two that Remote Control connects, the two idle for hours on one line each under an earlier line, next to a real Claude whose status line shows the same size and time left as its row](assets/fork-screenshot.png)
 
-The groups `Acme` and `Blog` are open and `Oss` is folded, its header counting the agent waiting
-in one of its spaces. The 🟢 ⏳ 🟠 in front of the tab names came from the Tab Status plugin,
-which this fork has since replaced with coloured status dots (see [tabs](#tabs)). Three
+The groups `Acme` and `Blog` are open and `Oss` is folded, its header's red dot marking the agent
+waiting in one of its spaces (`unseen_indicator = "dot"`; a red count by default). The pill at the
+right of the spaces header is the Mac's CPU and memory use (see [system usage](#system-usage)).
+In front of the tab names is each tab's agent status, here as symbols (✓ done, ◐ working,
+× blocked), and the red ⚑ flags the tests tab to come back to (see [tabs](#tabs)). Three
 separate Herdr plugins add most of the rest:
 [Agent Recency](https://github.com/bagonyi/herdr-agent-recency) lists the agents panel by each
 agent's last activity, which this fork shows as `3m ago`,
@@ -37,7 +39,8 @@ agent's last activity, which this fork shows as `3m ago`,
 context size, green to red, and its prompt cache's time left, orange in the last 10 minutes, and
 [Claude Subagents](https://github.com/bagonyi/herdr-claude-subagents) the robot with how many
 agents it has at work. The prompt icon with its background shells comes from this fork, which
-reads them from Claude's footer. Agents idle for over 2 hours sit on one line each under
+reads them from Claude's footer, and so does the cloud on the two agents Remote Control connects
+to claude.ai. Agents idle for over 2 hours sit on one line each under
 `earlier`. The tab on screen runs a real Claude, whose row shows the same size and time left as
 its status line, and the pill in the agents panel's title is Claude's weekly usage, from a script
 through `title_command`.
@@ -103,6 +106,8 @@ through `title_command`.
 - A click on it opens a command in a popup hanging from it, as the agents panel's title does, and
   another click closes it. Mine shows CPU and memory in detail, then memory and CPU per pane,
   labelled with space, tab and what runs there, and per app outside Herdr.
+
+  <img src="assets/system-popup.png" width="496" alt="A popup titled System: CPU at 26% with a bar, split into user and system, the load averages and the number of cores; memory, 13.3 of 16 GB, with a bar split into apps, wired and compressed, the memory pressure, normal, the free share and the swap; then CPU and memory per pane in Herdr, each named by its space, tab and what runs in it, and per app outside Herdr, how often it refreshes, and keys to refresh and close">
 
 ### agents
 
@@ -203,9 +208,10 @@ through `title_command`.
   (underlined in a theme of terminal colours). A mistake in `popup` only costs the click, with a
   warning, not the whole config.
 
-  <img src="assets/usage-popup.png" width="464" alt="The agents panel's title pill, 7d 81% · 22h, with a popup titled Claude usage hanging from it: this week's usage at 81% with a bar, when it resets and the pace it's on, the week's Fable limit at 21%, where the usage went, extra usage off, the plan and the time of the figures, and r to refresh, q to close">
+  <img src="assets/usage-popup.png" width="464" alt="A popup titled Claude usage: this week's usage at 18% with a bar, when it resets and the pace it's on, the week's Fable limit at 14%, where the usage went and extra usage off, then a chart of the use by day over the last 16 days, this week's days lighter, against a dashed line at 14% a day, the pace that uses up a week, with views by week, month and hours, today's use so far and the daily average, the plan and the time of the figures, and keys to switch the view, refresh and close">
 
-  This one is Claude's usage, as Claude Code's `/usage` shows it, from a script of mine.
+  This one is Claude's usage, as Claude Code's `/usage` shows it, with a chart of my use by day,
+  week, month or hour under it, from a script of mine.
 - The agents panel's title can leave out the sort label (`grouped`, `priority` or a plugin's
   agent view's, such as `recent`), and with it the click that switches the order
   (`sort_label = false`); a title command's text then ends a column from the edge.
