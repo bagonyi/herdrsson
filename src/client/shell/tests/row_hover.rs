@@ -233,6 +233,54 @@ fn hovering_or_dragging_the_sidebar_divider_lights_it() {
 }
 
 #[test]
+fn hovering_or_dragging_the_spaces_agents_divider_lights_it() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.compose(140, 20).expect("frame");
+    let palette = state.config.palette.clone();
+    let color = crate::protocol::color_to_u32;
+    let line_fg = |state: &mut ClientShellState| {
+        let frame = state.compose(140, 20).expect("frame");
+        let line = state.hits.sidebar_section_divider;
+        (line.x..line.right())
+            .map(|x| frame.cells[line.y as usize * frame.width as usize + x as usize].fg)
+            .collect::<Vec<_>>()
+    };
+    let lit = |fgs: &[u32]| fgs.iter().all(|fg| *fg == color(palette.overlay0));
+    let plain = line_fg(&mut state);
+    assert!(!plain.is_empty(), "the sidebar shows the line");
+    assert!(plain.iter().all(|fg| *fg == color(palette.surface_dim)));
+
+    let line = state.hits.sidebar_section_divider;
+    let outcome = state.handle_raw_events(vec![moved(line.x + 3, line.y)]);
+    assert!(outcome.repaint);
+    assert!(lit(&line_fg(&mut state)), "hovering lights the whole line");
+
+    state.handle_raw_events(vec![left(MouseEventKind::Down, (line.x + 3, line.y))]);
+    state.handle_raw_events(vec![left(MouseEventKind::Drag, (line.x + 3, line.y + 2))]);
+    assert!(lit(&line_fg(&mut state)), "the dragged line stays lit");
+    assert_eq!(
+        state.hits.sidebar_section_divider.y,
+        line.y + 2,
+        "the drag resized"
+    );
+    state.handle_raw_events(vec![left(MouseEventKind::Up, (line.x + 3, line.y + 2))]);
+    assert!(
+        lit(&line_fg(&mut state)),
+        "the line stays lit under the mouse after the drag"
+    );
+
+    let outcome = state.handle_raw_events(vec![moved(line.x + 3, line.y + 4)]);
+    assert!(outcome.repaint);
+    assert_eq!(
+        line_fg(&mut state),
+        plain,
+        "moving off the line unlights it"
+    );
+}
+
+#[test]
 fn hovering_a_group_header_highlights_it_like_a_space_row() {
     let mut state = grouped_state();
     let plain = state.compose(140, 20).expect("frame");

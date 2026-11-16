@@ -2,8 +2,9 @@ use super::*;
 use crossterm::event::{MouseEvent, MouseEventKind};
 use ratatui::style::Color;
 
-/// A tab, sidebar row or the sidebar's resize divider under the mouse, or the agents panel's
-/// title (or the spaces header's system usage) when a click on it opens a popup.
+/// A tab, sidebar row or one of the sidebar's resize dividers (its edge, or the line between the
+/// spaces and the agents panel) under the mouse, or the agents panel's title (or the spaces
+/// header's system usage) when a click on it opens a popup.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum HoveredRow {
     Tab(Rect),
@@ -14,8 +15,8 @@ enum HoveredRow {
 
 impl ClientShellState {
     /// Tracks the mouse so the tab, machine, space, space-group header or agent row under it is
-    /// highlighted, as is the sidebar divider to show it can be dragged. Only motion and drags
-    /// move the highlight; terminals report motion before a click or scroll at a new spot.
+    /// highlighted, as are the sidebar's dividers to show they can be dragged. Only motion and
+    /// drags move the highlight; terminals report motion before a click or scroll at a new spot.
     pub(super) fn update_row_hover(&mut self, mouse: MouseEvent, outcome: &mut ClientShellInput) {
         if !matches!(mouse.kind, MouseEventKind::Moved | MouseEventKind::Drag(_)) {
             return;
@@ -36,10 +37,15 @@ impl ClientShellState {
             return None;
         }
         let divider = self.hits.sidebar_divider;
+        // Fork: the line between the spaces and the agents panel lights up as the sidebar's does.
+        let section_divider = self.hits.sidebar_section_divider;
         match self.chrome_drag {
-            // The divider follows the mouse while dragged, so it stays lit throughout.
+            // A divider follows the mouse while dragged, so it stays lit throughout.
             Some(ClientChromeDrag::SidebarWidth) if !divider.is_empty() => {
                 return Some(HoveredRow::SidebarDivider(divider));
+            }
+            Some(ClientChromeDrag::SidebarSection) if !section_divider.is_empty() => {
+                return Some(HoveredRow::SidebarDivider(section_divider));
             }
             Some(_) => return None,
             None => {}
@@ -74,7 +80,10 @@ impl ClientShellState {
             .chain(self.hits.endpoint_agents.iter().map(|(rect, _, _)| *rect))
             .map(HoveredRow::Sidebar);
         tabs.chain(sidebar)
-            .chain([HoveredRow::SidebarDivider(divider)])
+            .chain([
+                HoveredRow::SidebarDivider(divider),
+                HoveredRow::SidebarDivider(section_divider),
+            ])
             .chain(title)
             .find(|row| {
                 let (HoveredRow::Tab(rect)

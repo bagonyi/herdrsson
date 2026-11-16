@@ -267,7 +267,8 @@ through `title_command`.
   sidebar row's sits halfway between the current row's colour and Navigate mode's cursor, so it
   reads as neither; in the `terminal` theme, which has no colours to mix, the row is underlined
   instead.
-- The sidebar's dividing line lights up while the mouse is over it or dragging it.
+- The sidebar's dividing lines, its edge and the line between the spaces and the agents panel,
+  light up while the mouse is over them or dragging them.
 - Ctrl+click works as a right-click on the sidebar, the tab bar and pane borders, as it does
   elsewhere on macOS. Terminals pass ctrl+click on to Herdr as a left click with Ctrl held, and
   stock Herdr treats it as a plain click there. On a pane's contents ctrl+click still opens
