@@ -528,6 +528,8 @@ uses the Herdr number.
   neither below nor above its title opens to its right. `keys.agent_switcher` lists the agents
   latest visited first, as Cmd+Tab lists apps, and spaces can show waiting agents as a red dot,
   or nothing (`unseen_indicator`).
+- 2026.11.16 (on Herdr 0.9.5): the line between the spaces and the agents panel lights up under
+  the mouse and while dragged, as the sidebar's edge does.
 
 ## caveats
 
