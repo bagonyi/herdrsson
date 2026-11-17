@@ -3,8 +3,8 @@
 Herdrsson ("son of Herdr" in Icelandic) is a personal fork of
 [herdrdev/herdr](https://github.com/herdrdev/herdr). It's unofficial: the Herdr project doesn't
 make or endorse it. The `herdrsson` branch is Herdr's code with the changes below on top: usually
-the latest Herdr release, currently 0.9.5. Everything else is stock Herdr; see the
-[README](README.md) and [herdr.dev/docs](https://herdr.dev/docs/).
+the latest Herdr release, currently Herdr's code of 2026-10-29 (after 0.9.5). Everything else is
+stock Herdr; see the [README](README.md) and [herdr.dev/docs](https://herdr.dev/docs/).
 
 It installs and runs as `herdr`, with Herdr's config folder, plugins and agent integrations, so
 the `herdr` commands and `~/.config/herdr/config.toml` below are right as written.
@@ -536,6 +536,11 @@ uses the Herdr number.
   or nothing (`unseen_indicator`).
 - 2026.11.16 (on Herdr 0.9.5): the line between the spaces and the agents panel lights up under
   the mouse and while dragged, as the sidebar's edge does.
+- 2026.11.17 (on Herdr's code of 2026-10-29, after 0.9.5): on Herdr's newest code, as no Herdr
+  release has come out since 0.9.5, with its fixes since then: on macOS the server keeps running
+  when the terminal app that started it quits, a link the cursor carries onto a full page no
+  longer crashes it, and panes dying while the Mac shuts down no longer cost the saved layout.
+  Nothing new of its own.
 
 ## caveats
 
@@ -559,7 +564,7 @@ Herdrsson uses it only to say where it comes from. This fork changes files under
 API schema generated from them (`docs/next/api/`), adds a note at the top of `README.md`, and adds
 this file and `HERDRSSON_VERSION`. Each change is a separate commit on top of Herdr's code,
 usually a release tag. This fork doesn't carry the tags, so fetch them from Herdr to list the
-commits and every changed file:
+commits and every changed file (while the branch isn't on a tag, as now, use `base=ee5bfb50`):
 
 ```bash
 git remote add upstream https://github.com/herdrdev/herdr
